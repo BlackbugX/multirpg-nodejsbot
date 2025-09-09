@@ -353,6 +353,10 @@ class MultiRPGBot {
           await this.handleSearchCommand(args, user, networkId);
           break;
           
+        case '!alias':
+          await this.handleAliasCommand(args, user, networkId);
+          break;
+          
         case '!social':
           await this.handleSocialCommand(args, user, networkId);
           break;
@@ -396,6 +400,62 @@ class MultiRPGBot {
     const client = this.clients.get(networkId);
     if (client) {
       client.irc.privmsg(user, message);
+    }
+  }
+
+  /**
+   * Send cross-network message
+   * @param {string} fromUser - Sender username
+   * @param {string} targetPlayer - Target player (can be username or global ID)
+   * @param {string} message - Message to send
+   */
+  async sendCrossNetworkMessage(fromUser, targetPlayer, message) {
+    try {
+      // First, try to find the player by username across all networks
+      let targetPlayerData = await this.globalPlayerSystem.findPlayer(targetPlayer);
+      
+      if (!targetPlayerData) {
+        // If not found by username, try to find by global ID or display name
+        targetPlayerData = await this.globalPlayerSystem.findPlayerByDisplayName(targetPlayer);
+      }
+      
+      if (!targetPlayerData) {
+        throw new Error(`Player "${targetPlayer}" not found in any network. Use !search player <name> to find players.`);
+      }
+
+      // Get sender's display name and network
+      const senderData = await this.globalPlayerSystem.findPlayer(fromUser);
+      const senderDisplayName = senderData ? `${senderData.name} [${senderData.networkId}]` : fromUser;
+      
+      // Get target's display name and network
+      const targetNetwork = this.networks.get(targetPlayerData.networkId);
+      const targetDisplayName = `${targetPlayerData.name} [${targetNetwork ? targetNetwork.name : targetPlayerData.networkId}]`;
+      
+      // Format the cross-network message
+      const crossNetworkMessage = [
+        `💬 **Cross-Network Message** 💬`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `📤 **From:** ${senderDisplayName}`,
+        `💬 **Message:** ${message}`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `💡 Reply with: !cross message ${fromUser} <your message>`
+      ].join('\n');
+
+      // Send the message to the target player
+      await this.sendPrivateMessage(targetPlayerData.networkId, targetPlayerData.name, crossNetworkMessage);
+      
+      // Log the cross-network message
+      this.logger.info(`Cross-network message: ${fromUser} -> ${targetPlayerData.name} (${targetPlayerData.networkId})`);
+      
+      return {
+        targetDisplayName,
+        targetNetwork: targetNetwork ? targetNetwork.name : targetPlayerData.networkId,
+        success: true
+      };
+      
+    } catch (error) {
+      this.logger.error('Cross-network message error:', error);
+      throw error;
     }
   }
 
@@ -977,6 +1037,148 @@ class MultiRPGBot {
   }
 
   /**
+   * Handle alias command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleAliasCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `🏷️ **Player Alias System** 🏷️`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `This system helps you identify players across different networks`,
+        `even when they have different usernames.`,
+        ``,
+        `**Commands:**`,
+        `• !alias set <name> <network> - Set your display name for a network`,
+        `• !alias list - Show your aliases across networks`,
+        `• !alias find <name> - Find a player by any of their aliases`,
+        `• !alias remove <network> - Remove alias for a network`,
+        ``,
+        `**Examples:**`,
+        `• !alias set "John" gamesurge - Set "John" as your GameSurge name`,
+        `• !alias set "John123" freenode - Set "John123" as your Freenode name`,
+        `• !alias find John - Find player "John" across all networks`,
+        ``,
+        `**How Cross-Network Messaging Works:**`,
+        `1. Players can have different usernames on different networks`,
+        `2. Use !alias set to register your names for each network`,
+        `3. Others can find you using !alias find or !search player`,
+        `4. Cross-network messages work by finding the player's current network`
+      ].join('\n'));
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'set':
+        const aliasName = args[1];
+        const aliasNetwork = args[2];
+        
+        if (!aliasName || !aliasNetwork) {
+          await this.sendPrivateMessage(networkId, user, `❌ Usage: !alias set <name> <network>`);
+          return;
+        }
+        
+        try {
+          await this.globalPlayerSystem.setPlayerAlias(user, aliasName, aliasNetwork);
+          await this.sendPrivateMessage(networkId, user, [
+            `✅ **Alias Set Successfully!** ✅`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `🏷️ **Name:** ${aliasName}`,
+            `🌐 **Network:** ${aliasNetwork}`,
+            `👤 **Player:** ${user}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Others can now find you using !alias find ${aliasName}`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to set alias: ${error.message}`);
+        }
+        break;
+        
+      case 'list':
+        const aliases = await this.globalPlayerSystem.getPlayerAliases(user);
+        if (aliases.length === 0) {
+          await this.sendPrivateMessage(networkId, user, [
+            `🏷️ **Your Aliases** 🏷️`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `You don't have any aliases set yet.`,
+            `💡 Use !alias set <name> <network> to set aliases!`
+          ].join('\n'));
+          return;
+        }
+        
+        const aliasList = aliases.map((alias, index) => 
+          `${index + 1}. **${alias.name}** - ${alias.network}`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🏷️ **Your Aliases** (${aliases.length}) 🏷️`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          aliasList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Others can find you using any of these names!`
+        ].join('\n'));
+        break;
+        
+      case 'find':
+        const searchName = args[1];
+        if (!searchName) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a name to search for.`);
+          return;
+        }
+        
+        try {
+          const foundPlayers = await this.globalPlayerSystem.findPlayersByAlias(searchName);
+          if (foundPlayers.length === 0) {
+            await this.sendPrivateMessage(networkId, user, [
+              `🔍 **Alias Search Results** 🔍`,
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+              `No players found with alias "${searchName}".`,
+              `💡 Try using !search player <name> instead.`
+            ].join('\n'));
+            return;
+          }
+          
+          const foundList = foundPlayers.map((player, index) => 
+            `${index + 1}. **${player.name}** - ${player.network} (${player.aliases?.join(', ') || 'No aliases'})`
+          ).join('\n');
+          
+          await this.sendPrivateMessage(networkId, user, [
+            `🔍 **Alias Search Results for "${searchName}"** 🔍`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            foundList,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Use !cross message <player> <message> to message them!`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Search failed: ${error.message}`);
+        }
+        break;
+        
+      case 'remove':
+        const removeNetwork = args[1];
+        if (!removeNetwork) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a network to remove alias from.`);
+          return;
+        }
+        
+        try {
+          await this.globalPlayerSystem.removePlayerAlias(user, removeNetwork);
+          await this.sendPrivateMessage(networkId, user, `✅ Removed alias for network ${removeNetwork}.`);
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to remove alias: ${error.message}`);
+        }
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown alias command: ${action}. Use !alias for help.`);
+    }
+  }
+
+  /**
    * Handle search command
    * @param {Array} args - Command arguments
    * @param {string} user - Username
@@ -1192,6 +1394,37 @@ class MultiRPGBot {
         }
         break;
         
+      case 'message':
+        const targetPlayer = args[1];
+        const message = args.slice(2).join(' ');
+        
+        if (!targetPlayer) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a player to message.`);
+          return;
+        }
+        
+        if (!message) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a message to send.`);
+          return;
+        }
+        
+        try {
+          const result = await this.sendCrossNetworkMessage(user, targetPlayer, message);
+          await this.sendPrivateMessage(networkId, user, [
+            `💬 **Cross-Network Message Sent!** 💬`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `📤 **From:** ${user}`,
+            `📥 **To:** ${result.targetDisplayName}`,
+            `🌐 **Network:** ${result.targetNetwork}`,
+            `💬 **Message:** ${message}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 The message has been delivered!`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to send message: ${error.message}`);
+        }
+        break;
+        
       case 'leaderboard':
         const globalLeaderboard = await this.globalPlayerSystem.getGlobalLeaderboard(20);
         const leaderboardList = globalLeaderboard.map((player, index) => 
@@ -1308,6 +1541,7 @@ class MultiRPGBot {
       '• !players - Show online players across all networks',
       '• !networks - Show network status and information',
       '• !search - Search for players, guilds, and more',
+      '• !alias - Player alias system for cross-network identification',
       '• !social - Social features and friend system',
       '• !cross - Cross-network gameplay features',
       '',
@@ -1391,6 +1625,8 @@ class MultiRPGBot {
       '• /msg <botname> !search player <name> - Search for a specific player',
       '• /msg <botname> !search guild <name> - Search for a guild',
       '• /msg <botname> !search class <class> - Find players by class',
+      '• /msg <botname> !alias set <name> <network> - Set your alias for a network',
+      '• /msg <botname> !alias find <name> - Find player by any alias',
       '• /msg <botname> !social friends - Show your friends list',
       '• /msg <botname> !social add <player> - Add a player as friend',
       '• /msg <botname> !social stats - Show your social statistics',
