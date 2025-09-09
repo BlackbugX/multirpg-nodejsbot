@@ -213,26 +213,250 @@ class MultiRPGBot {
       this.globalSync.setNetworkStatus(networkId, false);
     });
 
-    // On private messages (game commands)
+    // On private messages (game commands and help)
     this.api.hookEvent(networkId, 'privmsg', async (message) => {
       if (message.nickname === networkConfig.game.nickname && message.target === networkConfig.irc.nick) {
         await this.handleGameMessage(message, networkId, networkConfig);
+      } else if (message.target === networkConfig.irc.nick) {
+        // Handle private messages for help commands
+        await this.handlePrivateMessage(message, networkId, networkConfig);
       }
     });
 
-    // On channel messages (player commands)
+    // On channel messages (only show help about private messages)
     this.api.hookEvent(networkId, 'privmsg', async (message) => {
       if (networkConfig.irc.channels.includes(message.target)) {
         await this.handleChannelMessage(message, networkId, networkConfig);
       }
     });
 
-    // On admin channel messages
+    // On admin channel messages (only show help about private messages)
     this.api.hookEvent(networkId, 'privmsg', async (message) => {
       if (networkConfig.irc.adminChannel && message.target === networkConfig.irc.adminChannel) {
-        await this.handleAdminMessage(message, networkId, networkConfig);
+        await this.handleAdminChannelMessage(message, networkId, networkConfig);
       }
     });
+  }
+
+  /**
+   * Handle private messages (help commands)
+   * @param {Object} message - IRC message
+   * @param {string} networkId - Network ID
+   * @param {Object} networkConfig - Network configuration
+   */
+  async handlePrivateMessage(message, networkId, networkConfig) {
+    const msg = message.message.trim();
+    const user = message.nickname;
+    
+    // Check if user is banned
+    if (this.adminTools.bannedUsers.has(user.toLowerCase())) {
+      return;
+    }
+
+    // Handle help commands via private message
+    if (msg.startsWith('!')) {
+      await this.handlePrivateCommand(msg, user, networkId, networkConfig);
+    }
+  }
+
+  /**
+   * Handle private commands
+   * @param {string} command - Command string
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   * @param {Object} networkConfig - Network configuration
+   */
+  async handlePrivateCommand(command, user, networkId, networkConfig) {
+    const parts = command.split(' ');
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+
+    try {
+      switch (cmd) {
+        case '!help':
+          await this.sendPrivateMessage(networkId, user, this.getHelpMessage());
+          break;
+          
+        case '!adminhelp':
+          if (this.isAdmin(user)) {
+            await this.sendPrivateMessage(networkId, user, this.getAdminHelpMessage());
+          } else {
+            await this.sendPrivateMessage(networkId, user, '❌ You do not have admin permissions.');
+          }
+          break;
+          
+        case '!userhelp':
+          await this.sendPrivateMessage(networkId, user, this.getUserHelpMessage());
+          break;
+          
+        case '!status':
+          if (args.length > 0) {
+            // Show specific player status
+            const targetPlayer = args[0];
+            await this.sendPrivateMessage(networkId, user, await this.getPlayerStatusMessage(targetPlayer));
+          } else {
+            // Show bot status
+            await this.sendPrivateMessage(networkId, user, await this.getStatusMessage());
+          }
+          break;
+          
+        case '!level':
+          const playerLevel = this.levelProgression.getPlayerLevel(user);
+          await this.sendPrivateMessage(networkId, user, `📊 Your level: ${playerLevel}`);
+          break;
+          
+        case '!class':
+          await this.handleClassCommand(user, networkId, user);
+          break;
+          
+        case '!guild':
+          await this.handleGuildCommand(args, user, networkId, user);
+          break;
+          
+        case '!quest':
+          await this.handleQuestCommand(args, user, networkId, user);
+          break;
+          
+        case '!battle':
+          await this.handleBattleCommand(args, user, networkId, user);
+          break;
+          
+        case '!tournament':
+          await this.handleTournamentCommand(args, user, networkId, user);
+          break;
+          
+        case '!leaderboard':
+          await this.handleLeaderboardCommand(args, user, networkId, user);
+          break;
+          
+        case '!achievements':
+          await this.handleAchievementsCommand(user, networkId, user);
+          break;
+          
+        case '!chain':
+          await this.handleChainCommand(args, user, networkId, user);
+          break;
+          
+        case '!infinite':
+          await this.handleInfiniteCommand(args, user, networkId, user);
+          break;
+          
+        case '!players':
+          await this.handlePlayersCommand(args, user, networkId);
+          break;
+          
+        case '!networks':
+          await this.handleNetworksCommand(user, networkId);
+          break;
+          
+        case '!search':
+          await this.handleSearchCommand(args, user, networkId);
+          break;
+          
+        case '!alias':
+          await this.handleAliasCommand(args, user, networkId);
+          break;
+          
+        case '!social':
+          await this.handleSocialCommand(args, user, networkId);
+          break;
+          
+        case '!cross':
+          await this.handleCrossNetworkCommand(args, user, networkId);
+          break;
+          
+        default:
+          await this.sendPrivateMessage(networkId, user, this.messageSystem.formatMessage('error_generic', {
+            message: `Unknown command: ${cmd}. Use !help for available commands.`
+          }));
+      }
+    } catch (error) {
+      this.logger.error(`Error handling private command ${cmd}:`, error);
+      await this.sendPrivateMessage(networkId, user, `❌ Error executing command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if user is admin
+   * @param {string} user - Username
+   * @returns {boolean} - Is admin
+   */
+  isAdmin(user) {
+    // Check against admin list in config
+    const adminUsers = this.config.get('admin.users', []);
+    return adminUsers.includes(user.toLowerCase()) || 
+           this.config.get('admin.permissions', []).some(perm => 
+             this.adminTools.hasPermission(user, perm)
+           );
+  }
+
+  /**
+   * Send private message
+   * @param {string} networkId - Network ID
+   * @param {string} user - Username
+   * @param {string} message - Message to send
+   */
+  async sendPrivateMessage(networkId, user, message) {
+    const client = this.clients.get(networkId);
+    if (client) {
+      client.irc.privmsg(user, message);
+    }
+  }
+
+  /**
+   * Send cross-network message
+   * @param {string} fromUser - Sender username
+   * @param {string} targetPlayer - Target player (can be username or global ID)
+   * @param {string} message - Message to send
+   */
+  async sendCrossNetworkMessage(fromUser, targetPlayer, message) {
+    try {
+      // First, try to find the player by username across all networks
+      let targetPlayerData = await this.globalPlayerSystem.findPlayer(targetPlayer);
+      
+      if (!targetPlayerData) {
+        // If not found by username, try to find by global ID or display name
+        targetPlayerData = await this.globalPlayerSystem.findPlayerByDisplayName(targetPlayer);
+      }
+      
+      if (!targetPlayerData) {
+        throw new Error(`Player "${targetPlayer}" not found in any network. Use !search player <name> to find players.`);
+      }
+
+      // Get sender's display name and network
+      const senderData = await this.globalPlayerSystem.findPlayer(fromUser);
+      const senderDisplayName = senderData ? `${senderData.name} [${senderData.networkId}]` : fromUser;
+      
+      // Get target's display name and network
+      const targetNetwork = this.networks.get(targetPlayerData.networkId);
+      const targetDisplayName = `${targetPlayerData.name} [${targetNetwork ? targetNetwork.name : targetPlayerData.networkId}]`;
+      
+      // Format the cross-network message
+      const crossNetworkMessage = [
+        `💬 **Cross-Network Message** 💬`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `📤 **From:** ${senderDisplayName}`,
+        `💬 **Message:** ${message}`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `💡 Reply with: !cross message ${fromUser} <your message>`
+      ].join('\n');
+
+      // Send the message to the target player
+      await this.sendPrivateMessage(targetPlayerData.networkId, targetPlayerData.name, crossNetworkMessage);
+      
+      // Log the cross-network message
+      this.logger.info(`Cross-network message: ${fromUser} -> ${targetPlayerData.name} (${targetPlayerData.networkId})`);
+      
+      return {
+        targetDisplayName,
+        targetNetwork: targetNetwork ? targetNetwork.name : targetPlayerData.networkId,
+        success: true
+      };
+      
+    } catch (error) {
+      this.logger.error('Cross-network message error:', error);
+      throw error;
+    }
   }
 
   /**
@@ -324,7 +548,7 @@ class MultiRPGBot {
   }
 
   /**
-   * Handle channel messages (player commands)
+   * Handle channel messages (only show help about private messages)
    * @param {Object} message - IRC message
    * @param {string} networkId - Network ID
    * @param {Object} networkConfig - Network configuration
@@ -338,104 +562,40 @@ class MultiRPGBot {
       return;
     }
 
-    // Handle player commands
-    if (msg.startsWith('!')) {
-      await this.handlePlayerCommand(msg, user, networkId, networkConfig, message.target);
+    // Only respond to help requests in channel, everything else via private message
+    if (msg.toLowerCase() === '!help' || msg.toLowerCase() === 'help') {
+      await this.sendMessage(networkId, message.target, 
+        `👋 Hi ${user}! To avoid channel penalties, please use private messages for all commands. ` +
+        `Send me a private message: /msg ${networkConfig.irc.nick} !help`
+      );
+    } else if (msg.startsWith('!')) {
+      // Silently ignore other commands in channel to avoid penalties
+      return;
     }
   }
 
   /**
-   * Handle admin messages
+   * Handle admin channel messages (only show help about private messages)
    * @param {Object} message - IRC message
    * @param {string} networkId - Network ID
    * @param {Object} networkConfig - Network configuration
    */
-  async handleAdminMessage(message, networkId, networkConfig) {
+  async handleAdminChannelMessage(message, networkId, networkConfig) {
     const msg = message.message.trim();
     const user = message.nickname;
     
-    if (msg.startsWith('!')) {
-      await this.adminTools.processCommand(msg, user, networkId, {
-        channel: message.target,
-        network: networkConfig
-      });
+    // Only respond to help requests in admin channel, everything else via private message
+    if (msg.toLowerCase() === '!help' || msg.toLowerCase() === '!adminhelp' || msg.toLowerCase() === 'help') {
+      await this.sendMessage(networkId, message.target, 
+        `👋 Hi ${user}! To avoid channel penalties, please use private messages for all admin commands. ` +
+        `Send me a private message: /msg ${networkConfig.irc.nick} !adminhelp`
+      );
+    } else if (msg.startsWith('!')) {
+      // Silently ignore other commands in channel to avoid penalties
+      return;
     }
   }
 
-  /**
-   * Handle player commands
-   * @param {string} command - Command string
-   * @param {string} user - Username
-   * @param {string} networkId - Network ID
-   * @param {Object} networkConfig - Network configuration
-   * @param {string} channel - Channel name
-   */
-  async handlePlayerCommand(command, user, networkId, networkConfig, channel) {
-    const parts = command.split(' ');
-    const cmd = parts[0].toLowerCase();
-    const args = parts.slice(1);
-
-    try {
-      switch (cmd) {
-        case '!help':
-          await this.sendMessage(networkId, channel, this.getHelpMessage());
-          break;
-          
-        case '!status':
-          await this.sendMessage(networkId, channel, await this.getStatusMessage());
-          break;
-          
-        case '!level':
-          const playerLevel = this.levelProgression.getPlayerLevel(user);
-          await this.sendMessage(networkId, channel, `📊 Your level: ${playerLevel}`);
-          break;
-          
-        case '!quest':
-          await this.handleQuestCommand(args, user, networkId, channel);
-          break;
-          
-        case '!battle':
-          await this.handleBattleCommand(args, user, networkId, channel);
-          break;
-          
-        case '!tournament':
-          await this.handleTournamentCommand(args, user, networkId, channel);
-          break;
-          
-        case '!leaderboard':
-          await this.handleLeaderboardCommand(args, user, networkId, channel);
-          break;
-          
-        case '!achievements':
-          await this.handleAchievementsCommand(user, networkId, channel);
-          break;
-          
-        case '!class':
-          await this.handleClassCommand(user, networkId, channel);
-          break;
-          
-        case '!guild':
-          await this.handleGuildCommand(args, user, networkId, channel);
-          break;
-          
-        case '!chain':
-          await this.handleChainCommand(args, user, networkId, channel);
-          break;
-          
-        case '!infinite':
-          await this.handleInfiniteCommand(args, user, networkId, channel);
-          break;
-          
-        default:
-          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
-            message: `Unknown command: ${cmd}`
-          }));
-      }
-    } catch (error) {
-      this.logger.error(`Error handling command ${cmd}:`, error);
-      await this.sendMessage(networkId, channel, `❌ Error executing command: ${error.message}`);
-    }
-  }
 
   /**
    * Handle quest command
@@ -776,7 +936,7 @@ class MultiRPGBot {
    */
   async handleInfiniteCommand(args, user, networkId, channel) {
     if (args.length === 0) {
-      await this.sendMessage(networkId, channel, `❓ Usage: !infinite [battle|quest|event] <type>`);
+      await this.sendPrivateMessage(networkId, user, `❓ Usage: !infinite [battle|quest|event] <type>`);
       return;
     }
 
@@ -787,24 +947,526 @@ class MultiRPGBot {
         const battleType = args[1] || 'dragon_horde';
         try {
           const battleData = await this.infiniteSystems.startInfiniteBattle(user, battleType);
-          await this.sendMessage(networkId, channel, `♾️ Infinite battle started: ${battleData.name}! Endless waves await!`);
+          await this.sendPrivateMessage(networkId, user, `♾️ Infinite battle started: ${battleData.name}! Endless waves await!`);
         } catch (error) {
-          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+          await this.sendPrivateMessage(networkId, user, this.messageSystem.formatMessage('error_generic', {
             message: error.message
           }));
         }
         break;
         
       case 'quest':
-        await this.sendMessage(networkId, channel, `📜 Use !chain start to begin infinite chain quests!`);
+        await this.sendPrivateMessage(networkId, user, `📜 Use !chain start to begin infinite chain quests!`);
         break;
         
       case 'event':
-        await this.sendMessage(networkId, channel, `🎉 Global events are automatically triggered! Watch for announcements!`);
+        await this.sendPrivateMessage(networkId, user, `🎉 Global events are automatically triggered! Watch for announcements!`);
         break;
         
       default:
-        await this.sendMessage(networkId, channel, `❓ Usage: !infinite [battle|quest|event] <type>`);
+        await this.sendPrivateMessage(networkId, user, `❓ Usage: !infinite [battle|quest|event] <type>`);
+    }
+  }
+
+  /**
+   * Handle players command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handlePlayersCommand(args, user, networkId) {
+    const limit = parseInt(args[0]) || 20;
+    const onlinePlayers = await this.globalPlayerSystem.getOnlinePlayers(limit);
+    
+    if (onlinePlayers.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `👥 **Online Players** 👥`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `No players are currently online.`,
+        `💡 Check back later or invite friends to join!`
+      ].join('\n'));
+      return;
+    }
+
+    const playerList = onlinePlayers.map((player, index) => {
+      const playerClass = this.playerClasses.getPlayerClass(player.globalId);
+      const networkInfo = this.networks.get(player.networkId);
+      const classDisplay = playerClass ? `[${playerClass.className}]` : '[No Class]';
+      const networkDisplay = networkInfo ? networkInfo.name : 'Unknown';
+      
+      return `${index + 1}. **${player.name}** ${classDisplay} - Level ${player.level} (${networkDisplay})`;
+    }).join('\n');
+
+    await this.sendPrivateMessage(networkId, user, [
+      `👥 **Online Players** (${onlinePlayers.length}) 👥`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      playerList,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `💡 Use !status <player> to see detailed player info!`
+    ].join('\n'));
+  }
+
+  /**
+   * Handle networks command
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleNetworksCommand(user, networkId) {
+    const networkStats = [];
+    
+    for (const [id, network] of this.networks) {
+      const isConnected = this.globalSync.isNetworkConnected(id);
+      const playerCount = await this.globalPlayerSystem.getNetworkPlayerCount(id);
+      
+      networkStats.push([
+        `🌐 **${network.name}**`,
+        `   📍 Server: ${network.irc.server}:${network.irc.port}`,
+        `   🔗 Status: ${isConnected ? '🟢 Connected' : '🔴 Disconnected'}`,
+        `   👥 Players: ${playerCount}`,
+        `   📺 Channels: ${network.irc.channels.join(', ')}`
+      ].join('\n'));
+    }
+
+    await this.sendPrivateMessage(networkId, user, [
+      `🌐 **Network Status** 🌐`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      networkStats.join('\n\n'),
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `💡 Players can play across all connected networks!`
+    ].join('\n'));
+  }
+
+  /**
+   * Handle alias command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleAliasCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `🏷️ **Player Alias System** 🏷️`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `This system helps you identify players across different networks`,
+        `even when they have different usernames.`,
+        ``,
+        `**Commands:**`,
+        `• !alias set <name> <network> - Set your display name for a network`,
+        `• !alias list - Show your aliases across networks`,
+        `• !alias find <name> - Find a player by any of their aliases`,
+        `• !alias remove <network> - Remove alias for a network`,
+        ``,
+        `**Examples:**`,
+        `• !alias set "John" gamesurge - Set "John" as your GameSurge name`,
+        `• !alias set "John123" freenode - Set "John123" as your Freenode name`,
+        `• !alias find John - Find player "John" across all networks`,
+        ``,
+        `**How Cross-Network Messaging Works:**`,
+        `1. Players can have different usernames on different networks`,
+        `2. Use !alias set to register your names for each network`,
+        `3. Others can find you using !alias find or !search player`,
+        `4. Cross-network messages work by finding the player's current network`
+      ].join('\n'));
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'set':
+        const aliasName = args[1];
+        const aliasNetwork = args[2];
+        
+        if (!aliasName || !aliasNetwork) {
+          await this.sendPrivateMessage(networkId, user, `❌ Usage: !alias set <name> <network>`);
+          return;
+        }
+        
+        try {
+          await this.globalPlayerSystem.setPlayerAlias(user, aliasName, aliasNetwork);
+          await this.sendPrivateMessage(networkId, user, [
+            `✅ **Alias Set Successfully!** ✅`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `🏷️ **Name:** ${aliasName}`,
+            `🌐 **Network:** ${aliasNetwork}`,
+            `👤 **Player:** ${user}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Others can now find you using !alias find ${aliasName}`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to set alias: ${error.message}`);
+        }
+        break;
+        
+      case 'list':
+        const aliases = await this.globalPlayerSystem.getPlayerAliases(user);
+        if (aliases.length === 0) {
+          await this.sendPrivateMessage(networkId, user, [
+            `🏷️ **Your Aliases** 🏷️`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `You don't have any aliases set yet.`,
+            `💡 Use !alias set <name> <network> to set aliases!`
+          ].join('\n'));
+          return;
+        }
+        
+        const aliasList = aliases.map((alias, index) => 
+          `${index + 1}. **${alias.name}** - ${alias.network}`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🏷️ **Your Aliases** (${aliases.length}) 🏷️`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          aliasList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Others can find you using any of these names!`
+        ].join('\n'));
+        break;
+        
+      case 'find':
+        const searchName = args[1];
+        if (!searchName) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a name to search for.`);
+          return;
+        }
+        
+        try {
+          const foundPlayers = await this.globalPlayerSystem.findPlayersByAlias(searchName);
+          if (foundPlayers.length === 0) {
+            await this.sendPrivateMessage(networkId, user, [
+              `🔍 **Alias Search Results** 🔍`,
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+              `No players found with alias "${searchName}".`,
+              `💡 Try using !search player <name> instead.`
+            ].join('\n'));
+            return;
+          }
+          
+          const foundList = foundPlayers.map((player, index) => 
+            `${index + 1}. **${player.name}** - ${player.network} (${player.aliases?.join(', ') || 'No aliases'})`
+          ).join('\n');
+          
+          await this.sendPrivateMessage(networkId, user, [
+            `🔍 **Alias Search Results for "${searchName}"** 🔍`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            foundList,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Use !cross message <player> <message> to message them!`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Search failed: ${error.message}`);
+        }
+        break;
+        
+      case 'remove':
+        const removeNetwork = args[1];
+        if (!removeNetwork) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a network to remove alias from.`);
+          return;
+        }
+        
+        try {
+          await this.globalPlayerSystem.removePlayerAlias(user, removeNetwork);
+          await this.sendPrivateMessage(networkId, user, `✅ Removed alias for network ${removeNetwork}.`);
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to remove alias: ${error.message}`);
+        }
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown alias command: ${action}. Use !alias for help.`);
+    }
+  }
+
+  /**
+   * Handle search command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleSearchCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `🔍 **Search Commands** 🔍`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `• !search player <name> - Search for a player`,
+        `• !search guild <name> - Search for a guild`,
+        `• !search class <class> - Search players by class`,
+        `• !search network <network> - Search players in network`,
+        `• !search level <min>-<max> - Search by level range`
+      ].join('\n'));
+      return;
+    }
+
+    const searchType = args[0].toLowerCase();
+    const searchTerm = args.slice(1).join(' ');
+
+    switch (searchType) {
+      case 'player':
+        if (!searchTerm) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a player name to search for.`);
+          return;
+        }
+        await this.sendPrivateMessage(networkId, user, await this.getPlayerStatusMessage(searchTerm));
+        break;
+        
+      case 'guild':
+        if (!searchTerm) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a guild name to search for.`);
+          return;
+        }
+        const guild = this.guildSystem.findGuild(searchTerm);
+        if (guild) {
+          const members = this.guildSystem.getGuildMembers(guild.id);
+          await this.sendPrivateMessage(networkId, user, [
+            `🏰 **Guild: ${guild.name}** 🏰`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `📊 **Level:** ${guild.level}`,
+            `👥 **Members:** ${members.length}`,
+            `💎 **Total Experience:** ${guild.totalExperience || 0}`,
+            `🏆 **Achievements:** ${guild.achievements?.length || 0}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Use !guild join ${guild.name} to join this guild!`
+          ].join('\n'));
+        } else {
+          await this.sendPrivateMessage(networkId, user, `❌ Guild "${searchTerm}" not found.`);
+        }
+        break;
+        
+      case 'class':
+        if (!searchTerm) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a class name to search for.`);
+          return;
+        }
+        const classPlayers = await this.globalPlayerSystem.getPlayersByClass(searchTerm);
+        if (classPlayers.length === 0) {
+          await this.sendPrivateMessage(networkId, user, `❌ No players found with class "${searchTerm}".`);
+          return;
+        }
+        
+        const classList = classPlayers.slice(0, 10).map((player, index) => 
+          `${index + 1}. **${player.name}** - Level ${player.level}`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🎭 **Players with Class: ${searchTerm}** 🎭`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          classList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Showing ${Math.min(10, classPlayers.length)} of ${classPlayers.length} players.`
+        ].join('\n'));
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown search type: ${searchType}. Use !search for help.`);
+    }
+  }
+
+  /**
+   * Handle social command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleSocialCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `👥 **Social Commands** 👥`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `• !social friends - Show your friends list`,
+        `• !social add <player> - Add a player as friend`,
+        `• !social remove <player> - Remove a friend`,
+        `• !social rivals - Show your rivals`,
+        `• !social challenge <player> - Challenge a player`,
+        `• !social message <player> <message> - Send message to player`,
+        `• !social stats - Show your social statistics`
+      ].join('\n'));
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'friends':
+        const friends = await this.globalPlayerSystem.getFriends(user);
+        if (friends.length === 0) {
+          await this.sendPrivateMessage(networkId, user, [
+            `👥 **Your Friends** 👥`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `You don't have any friends yet.`,
+            `💡 Use !social add <player> to add friends!`
+          ].join('\n'));
+          return;
+        }
+        
+        const friendsList = friends.map((friend, index) => 
+          `${index + 1}. **${friend.name}** - Level ${friend.level} (${friend.network})`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `👥 **Your Friends** (${friends.length}) 👥`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          friendsList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Use !social challenge <player> to challenge friends!`
+        ].join('\n'));
+        break;
+        
+      case 'add':
+        const friendName = args[1];
+        if (!friendName) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a player name to add as friend.`);
+          return;
+        }
+        
+        try {
+          await this.globalPlayerSystem.addFriend(user, friendName);
+          await this.sendPrivateMessage(networkId, user, `✅ Added ${friendName} as a friend!`);
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to add friend: ${error.message}`);
+        }
+        break;
+        
+      case 'stats':
+        const socialStats = await this.globalPlayerSystem.getSocialStats(user);
+        await this.sendPrivateMessage(networkId, user, [
+          `📊 **Your Social Statistics** 📊`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `👥 **Friends:** ${socialStats.friends}`,
+          `⚔️ **Challenges Sent:** ${socialStats.challengesSent}`,
+          `🏆 **Challenges Won:** ${socialStats.challengesWon}`,
+          `💬 **Messages Sent:** ${socialStats.messagesSent}`,
+          `🌟 **Reputation:** ${socialStats.reputation}`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Keep playing to improve your social stats!`
+        ].join('\n'));
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown social command: ${action}. Use !social for help.`);
+    }
+  }
+
+  /**
+   * Handle cross-network command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleCrossNetworkCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `🌐 **Cross-Network Commands** 🌐`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `• !cross battle <player> - Challenge player from any network`,
+        `• !cross message <player> <message> - Send message across networks`,
+        `• !cross guild <action> - Cross-network guild actions`,
+        `• !cross tournament - Join cross-network tournaments`,
+        `• !cross leaderboard - Global leaderboard across all networks`,
+        `• !cross events - Cross-network events and activities`
+      ].join('\n'));
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'battle':
+        const opponent = args[1];
+        if (!opponent) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify an opponent to challenge.`);
+          return;
+        }
+        
+        try {
+          const battle = await this.battleSystem.startCrossNetworkBattle(user, opponent);
+          await this.sendPrivateMessage(networkId, user, [
+            `⚔️ **Cross-Network Battle Started!** ⚔️`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `🎯 **Challenger:** ${user}`,
+            `🎯 **Opponent:** ${opponent}`,
+            `🌐 **Battle ID:** ${battle.id}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Battle results will be announced when complete!`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to start cross-network battle: ${error.message}`);
+        }
+        break;
+        
+      case 'message':
+        const targetPlayer = args[1];
+        const message = args.slice(2).join(' ');
+        
+        if (!targetPlayer) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a player to message.`);
+          return;
+        }
+        
+        if (!message) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a message to send.`);
+          return;
+        }
+        
+        try {
+          const result = await this.sendCrossNetworkMessage(user, targetPlayer, message);
+          await this.sendPrivateMessage(networkId, user, [
+            `💬 **Cross-Network Message Sent!** 💬`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `📤 **From:** ${user}`,
+            `📥 **To:** ${result.targetDisplayName}`,
+            `🌐 **Network:** ${result.targetNetwork}`,
+            `💬 **Message:** ${message}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 The message has been delivered!`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to send message: ${error.message}`);
+        }
+        break;
+        
+      case 'leaderboard':
+        const globalLeaderboard = await this.globalPlayerSystem.getGlobalLeaderboard(20);
+        const leaderboardList = globalLeaderboard.map((player, index) => 
+          `${index + 1}. **${player.name}** [${player.class}] - Level ${player.level} (${player.network})`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🏆 **Global Leaderboard** 🏆`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          leaderboardList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Compete with players from all networks!`
+        ].join('\n'));
+        break;
+        
+      case 'events':
+        const events = await this.globalSync.getActiveEvents();
+        if (events.length === 0) {
+          await this.sendPrivateMessage(networkId, user, [
+            `🎉 **Cross-Network Events** 🎉`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `No active cross-network events at the moment.`,
+            `💡 Check back later for exciting global events!`
+          ].join('\n'));
+          return;
+        }
+        
+        const eventsList = events.map((event, index) => 
+          `${index + 1}. **${event.name}** - ${event.description}`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🎉 **Active Cross-Network Events** 🎉`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          eventsList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Participate in events to earn rewards!`
+        ].join('\n'));
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown cross-network command: ${action}. Use !cross for help.`);
     }
   }
 
@@ -855,22 +1517,225 @@ class MultiRPGBot {
    * Get help message
    */
   getHelpMessage() {
-    return this.messageSystem.formatMessage('help_general', {
-      commands: [
-        '!status - Bot status',
-        '!level - Your level',
-        '!class - Your class info',
-        '!guild - Guild information',
-        '!quest - Available quests',
-        '!battle pve/pvp - Start battles',
-        '!tournament - Tournament info',
-        '!leaderboard - Global leaderboard',
-        '!achievements - Your achievements',
-        '!chain - Start chain quests',
-        '!infinite - Infinite battles',
-        '!help - This help'
-      ].join(' | ')
-    });
+    return [
+      '🎮 **Enhanced MultiRPG Bot Help** 🎮',
+      '',
+      '⚠️ **IMPORTANT: ALL COMMANDS MUST BE SENT VIA PRIVATE MESSAGE!** ⚠️',
+      'Using commands in channels will result in penalties!',
+      '',
+      '**📋 Available Commands (Private Message Only):**',
+      '• !help - Show this help message',
+      '• !userhelp - User-specific help',
+      '• !adminhelp - Admin commands (admin only)',
+      '• !status [player] - Bot status or specific player status',
+      '• !level - Your current level',
+      '• !class - Your character class info',
+      '• !guild - Guild information and management',
+      '• !quest - Available quests and quest management',
+      '• !battle - Start battles (PvE/PvP)',
+      '• !tournament - Tournament information',
+      '• !leaderboard - Global leaderboards',
+      '• !achievements - Your achievements',
+      '• !chain - Chain quest system',
+      '• !infinite - Infinite battles and events',
+      '• !players - Show online players across all networks',
+      '• !networks - Show network status and information',
+      '• !search - Search for players, guilds, and more',
+      '• !alias - Player alias system for cross-network identification',
+      '• !social - Social features and friend system',
+      '• !cross - Cross-network gameplay features',
+      '',
+      '**🎯 How to Use (PRIVATE MESSAGES ONLY):**',
+      '• Send ALL commands as private messages: /msg <botname> !command',
+      '• Example: /msg MultiRPGBot !status',
+      '• Example: /msg MultiRPGBot !level',
+      '• Example: /msg MultiRPGBot !guild join Warriors',
+      '• All gameplay is automated - the bot handles everything!',
+      '• Your character will automatically level up, fight, and progress',
+      '• Join guilds, complete quests, and participate in tournaments',
+      '',
+      '**⚡ Quick Start (Private Messages):**',
+      '• /msg <botname> !status - See bot status',
+      '• /msg <botname> !level - Check your level',
+      '• /msg <botname> !guild - Join a guild',
+      '• /msg <botname> !quest - Start questing',
+      '',
+      '**❓ Need More Help? (Private Messages):**',
+      '• /msg <botname> !userhelp - Detailed user commands',
+      '• /msg <botname> !adminhelp - Admin commands (if you have permissions)',
+      '• The bot runs 24/7 with full automation!',
+      '',
+      '**🚫 NEVER use commands in channels - you will be penalized!**'
+    ].join('\n');
+  }
+
+  /**
+   * Get user help message
+   */
+  getUserHelpMessage() {
+    return [
+      '👤 **User Commands Help** 👤',
+      '',
+      '⚠️ **ALL COMMANDS MUST BE SENT VIA PRIVATE MESSAGE!** ⚠️',
+      'Use: /msg <botname> !command',
+      '',
+      '**🎮 Game Commands (Private Message Only):**',
+      '• /msg <botname> !status - Show detailed bot status and statistics',
+      '• /msg <botname> !status <player> - Show another player\'s status',
+      '• /msg <botname> !level - Display your current level and experience',
+      '• /msg <botname> !class - Show your character class and abilities',
+      '',
+      '**🏰 Guild Commands (Private Message Only):**',
+      '• /msg <botname> !guild - Show your current guild information',
+      '• /msg <botname> !guild join <name> - Join a specific guild',
+      '• /msg <botname> !guild leave - Leave your current guild',
+      '• /msg <botname> !guild list - List top guilds',
+      '',
+      '**📜 Quest Commands (Private Message Only):**',
+      '• /msg <botname> !quest - Show available quests',
+      '• /msg <botname> !quest list - List all active quests',
+      '• /msg <botname> !quest accept - Accept the current quest',
+      '',
+      '**⚔️ Battle Commands (Private Message Only):**',
+      '• /msg <botname> !battle pve - Start a PvE battle against monsters',
+      '• /msg <botname> !battle pvp <player> - Challenge another player',
+      '• /msg <botname> !battle challenge - Challenge random opponent',
+      '',
+      '**🏆 Tournament Commands (Private Message Only):**',
+      '• /msg <botname> !tournament - Show tournament information',
+      '• /msg <botname> !tournament list - List active tournaments',
+      '• /msg <botname> !tournament join - Join current tournament',
+      '',
+      '**📊 Information Commands (Private Message Only):**',
+      '• /msg <botname> !leaderboard - Show global leaderboard',
+      '• /msg <botname> !leaderboard <number> - Show top N players',
+      '• /msg <botname> !achievements - Display your achievements',
+      '',
+      '**♾️ Advanced Commands (Private Message Only):**',
+      '• /msg <botname> !chain start <type> - Start a chain quest',
+      '• /msg <botname> !chain list - List available chain quests',
+      '• /msg <botname> !chain progress - Check your chain progress',
+      '• /msg <botname> !infinite battle <type> - Start infinite battle',
+      '• /msg <botname> !infinite quest - Start infinite questing',
+      '• /msg <botname> !infinite event - Check global events',
+      '',
+      '**👥 Social Commands (Private Message Only):**',
+      '• /msg <botname> !players - Show online players across all networks',
+      '• /msg <botname> !networks - Show network status and information',
+      '• /msg <botname> !search player <name> - Search for a specific player',
+      '• /msg <botname> !search guild <name> - Search for a guild',
+      '• /msg <botname> !search class <class> - Find players by class',
+      '• /msg <botname> !alias set <name> <network> - Set your alias for a network',
+      '• /msg <botname> !alias find <name> - Find player by any alias',
+      '• /msg <botname> !social friends - Show your friends list',
+      '• /msg <botname> !social add <player> - Add a player as friend',
+      '• /msg <botname> !social stats - Show your social statistics',
+      '',
+      '**🌐 Cross-Network Commands (Private Message Only):**',
+      '• /msg <botname> !cross battle <player> - Challenge player from any network',
+      '• /msg <botname> !cross leaderboard - Global leaderboard across all networks',
+      '• /msg <botname> !cross events - Cross-network events and activities',
+      '• /msg <botname> !cross message <player> <message> - Send message across networks',
+      '',
+      '**💡 Important Tips:**',
+      '• 🚫 NEVER use commands in channels - you will be penalized!',
+      '• ✅ ALWAYS use private messages: /msg <botname> !command',
+      '• 🤖 The bot handles all gameplay automatically',
+      '• 📈 Your character progresses even when offline',
+      '• 🏰 Join guilds for bonuses and team play',
+      '• 📜 Complete quests for rewards and experience',
+      '• ⚔️ Battles and tournaments happen automatically',
+      '',
+      '**Example Usage:**',
+      '• /msg MultiRPGBot !status',
+      '• /msg MultiRPGBot !guild join Warriors',
+      '• /msg MultiRPGBot !battle pve'
+    ].join('\n');
+  }
+
+  /**
+   * Get admin help message
+   */
+  getAdminHelpMessage() {
+    return [
+      '👑 **Admin Commands Help** 👑',
+      '',
+      '⚠️ **ALL ADMIN COMMANDS MUST BE SENT VIA PRIVATE MESSAGE!** ⚠️',
+      'Use: /msg <botname> !command',
+      '',
+      '**📢 Broadcasting Commands (Private Message Only):**',
+      '• /msg <botname> !broadcast <message> - Broadcast to all networks',
+      '• /msg <botname> !announce <message> - Make an announcement',
+      '• /msg <botname> !global <message> - Send global message',
+      '• /msg <botname> !network <network> <message> - Send to specific network',
+      '',
+      '**👥 Player Management (Private Message Only):**',
+      '• /msg <botname> !ban <player> [reason] - Ban a player',
+      '• /msg <botname> !unban <player> - Unban a player',
+      '• /msg <botname> !kick <player> [reason] - Kick a player',
+      '• /msg <botname> !mute <player> [duration] - Mute a player',
+      '• /msg <botname> !unmute <player> - Unmute a player',
+      '• /msg <botname> !warn <player> <reason> - Warn a player',
+      '• /msg <botname> !playerinfo <player> - Get player information',
+      '',
+      '**🎉 Event Management (Private Message Only):**',
+      '• /msg <botname> !event start <name> - Start a global event',
+      '• /msg <botname> !event stop <name> - Stop a global event',
+      '• /msg <botname> !event list - List active events',
+      '• /msg <botname> !event create <name> <type> - Create new event',
+      '',
+      '**🏆 Tournament Management (Private Message Only):**',
+      '• /msg <botname> !tournament create <name> - Create tournament',
+      '• /msg <botname> !tournament start <id> - Start tournament',
+      '• /msg <botname> !tournament stop <id> - Stop tournament',
+      '• /msg <botname> !tournament list - List all tournaments',
+      '• /msg <botname> !tournament add <id> <player> - Add player to tournament',
+      '• /msg <botname> !tournament remove <id> <player> - Remove player',
+      '',
+      '**⚙️ System Management (Private Message Only):**',
+      '• /msg <botname> !restart - Restart the bot',
+      '• /msg <botname> !shutdown - Shutdown the bot',
+      '• /msg <botname> !reload - Reload configuration',
+      '• /msg <botname> !status - Show detailed system status',
+      '• /msg <botname> !networks - Show network status',
+      '• /msg <botname> !players - Show player statistics',
+      '• /msg <botname> !battles - Show battle statistics',
+      '• /msg <botname> !quests - Show quest statistics',
+      '',
+      '**🔧 Configuration (Private Message Only):**',
+      '• /msg <botname> !config get <key> - Get configuration value',
+      '• /msg <botname> !config set <key> <value> - Set configuration value',
+      '• /msg <botname> !config reload - Reload configuration file',
+      '• /msg <botname> !config save - Save current configuration',
+      '',
+      '**📊 Monitoring (Private Message Only):**',
+      '• /msg <botname> !logs - Show recent logs',
+      '• /msg <botname> !errors - Show recent errors',
+      '• /msg <botname> !performance - Show performance metrics',
+      '• /msg <botname> !memory - Show memory usage',
+      '• /msg <botname> !uptime - Show bot uptime',
+      '',
+      '**🛡️ Security (Private Message Only):**',
+      '• /msg <botname> !permissions <user> - Check user permissions',
+      '• /msg <botname> !grant <user> <permission> - Grant permission',
+      '• /msg <botname> !revoke <user> <permission> - Revoke permission',
+      '• /msg <botname> !audit - Show audit log',
+      '',
+      '**💡 Important Admin Tips:**',
+      '• 🚫 NEVER use admin commands in channels - you will be penalized!',
+      '• ✅ ALWAYS use private messages: /msg <botname> !command',
+      '• 🔍 Use !status for detailed system information',
+      '• 📊 Monitor logs for any issues',
+      '• 🎉 Use events to engage players',
+      '• 🏆 Regular tournaments keep players active',
+      '• 🛡️ Be careful with ban/kick commands',
+      '',
+      '**Example Admin Usage:**',
+      '• /msg MultiRPGBot !status',
+      '• /msg MultiRPGBot !broadcast Welcome to the server!',
+      '• /msg MultiRPGBot !ban troublemaker Spamming',
+      '• /msg MultiRPGBot !event start Dragon Invasion'
+    ].join('\n');
   }
 
   /**
@@ -883,15 +1748,88 @@ class MultiRPGBot {
     const tournamentStats = this.tournamentSystem.getTournamentStats();
     
     return [
-      `🤖 BOT STATUS`,
-      `🌐 Networks: ${stats.connectedNetworks}/${stats.totalNetworks}`,
-      `👥 Players: ${stats.totalPlayers}`,
-      `📈 Average Level: ${levelStats.averageLevel}`,
-      `⚔️ Active Battles: ${battleStats.activeBattles}`,
-      `🏆 Active Tournaments: ${tournamentStats.activeTournaments}`,
-      `📜 Active Quests: ${this.questSystem.getActiveQuests().length}`,
-      `⏰ Uptime: ${this.getUptime()}`
+      `🤖 **Enhanced MultiRPG Bot Status** 🤖`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `🌐 **Networks:** ${stats.connectedNetworks}/${stats.totalNetworks} connected`,
+      `👥 **Players:** ${stats.totalPlayers} total across all networks`,
+      `📈 **Average Level:** ${levelStats.averageLevel}`,
+      `⚔️ **Active Battles:** ${battleStats.activeBattles}`,
+      `🏆 **Active Tournaments:** ${tournamentStats.activeTournaments}`,
+      `📜 **Active Quests:** ${this.questSystem.getActiveQuests().length}`,
+      `⏰ **Uptime:** ${this.getUptime()}`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `💡 Use !status <player> to check another player's status!`
     ].join('\n');
+  }
+
+  /**
+   * Get player status message
+   * @param {string} playerName - Player name to check
+   */
+  async getPlayerStatusMessage(playerName) {
+    try {
+      // Search for player across all networks
+      const playerData = await this.globalPlayerSystem.findPlayer(playerName);
+      
+      if (!playerData) {
+        return [
+          `❌ **Player Not Found** ❌`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `Player "${playerName}" was not found in any network.`,
+          `💡 Make sure the player name is spelled correctly.`,
+          `💡 Use !players to see online players.`
+        ].join('\n');
+      }
+
+      const playerClass = this.playerClasses.getPlayerClass(playerData.globalId);
+      const guild = this.guildSystem.getPlayerGuild(playerData.globalId);
+      const networkInfo = this.networks.get(playerData.networkId);
+      
+      return [
+        `👤 **Player Status: ${playerData.name}** 👤`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `🎭 **Character:** ${playerData.name} [${playerClass ? playerClass.className : 'No Class'}]`,
+        `📊 **Level:** ${playerData.level}`,
+        `💎 **Experience:** ${playerData.experience || 0}`,
+        `💰 **Gold:** ${playerData.gold || 0}`,
+        `🏦 **Bank:** ${playerData.bank || 0}`,
+        `⚔️ **Battles Won:** ${playerData.stats?.battlesWon || 0}`,
+        `🏆 **Tournaments Won:** ${playerData.stats?.tournamentsWon || 0}`,
+        `📜 **Quests Completed:** ${playerData.stats?.questsCompleted || 0}`,
+        `🏰 **Guild:** ${guild ? guild.name : 'No Guild'}`,
+        `🌐 **Network:** ${networkInfo ? networkInfo.name : 'Unknown'}`,
+        `🕐 **Last Seen:** ${this.formatLastSeen(playerData.lastSeen)}`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `💡 Use !players to see all online players!`
+      ].join('\n');
+    } catch (error) {
+      this.logger.error('Error getting player status:', error);
+      return [
+        `❌ **Error** ❌`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `Failed to retrieve player status for "${playerName}".`,
+        `💡 Please try again later.`
+      ].join('\n');
+    }
+  }
+
+  /**
+   * Format last seen time
+   * @param {Date} lastSeen - Last seen timestamp
+   */
+  formatLastSeen(lastSeen) {
+    if (!lastSeen) return 'Never';
+    
+    const now = new Date();
+    const diff = now - new Date(lastSeen);
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
+    if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+    return 'Just now';
   }
 
   /**

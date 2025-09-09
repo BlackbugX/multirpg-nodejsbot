@@ -136,6 +136,7 @@ module.exports = {
 
   admin: {
     enabled: true,
+    users: ['admin', 'moderator', 'owner'], // Add admin usernames here
     commands: {
       enableBroadcast: true,
       enablePlayerManagement: true,
