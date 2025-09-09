@@ -223,17 +223,17 @@ class MultiRPGBot {
       }
     });
 
-    // On channel messages (player commands)
+    // On channel messages (only show help about private messages)
     this.api.hookEvent(networkId, 'privmsg', async (message) => {
       if (networkConfig.irc.channels.includes(message.target)) {
         await this.handleChannelMessage(message, networkId, networkConfig);
       }
     });
 
-    // On admin channel messages
+    // On admin channel messages (only show help about private messages)
     this.api.hookEvent(networkId, 'privmsg', async (message) => {
       if (networkConfig.irc.adminChannel && message.target === networkConfig.irc.adminChannel) {
-        await this.handleAdminMessage(message, networkId, networkConfig);
+        await this.handleAdminChannelMessage(message, networkId, networkConfig);
       }
     });
   }
@@ -461,7 +461,7 @@ class MultiRPGBot {
   }
 
   /**
-   * Handle channel messages (player commands)
+   * Handle channel messages (only show help about private messages)
    * @param {Object} message - IRC message
    * @param {string} networkId - Network ID
    * @param {Object} networkConfig - Network configuration
@@ -475,104 +475,40 @@ class MultiRPGBot {
       return;
     }
 
-    // Handle player commands
-    if (msg.startsWith('!')) {
-      await this.handlePlayerCommand(msg, user, networkId, networkConfig, message.target);
+    // Only respond to help requests in channel, everything else via private message
+    if (msg.toLowerCase() === '!help' || msg.toLowerCase() === 'help') {
+      await this.sendMessage(networkId, message.target, 
+        `👋 Hi ${user}! To avoid channel penalties, please use private messages for all commands. ` +
+        `Send me a private message: /msg ${networkConfig.irc.nick} !help`
+      );
+    } else if (msg.startsWith('!')) {
+      // Silently ignore other commands in channel to avoid penalties
+      return;
     }
   }
 
   /**
-   * Handle admin messages
+   * Handle admin channel messages (only show help about private messages)
    * @param {Object} message - IRC message
    * @param {string} networkId - Network ID
    * @param {Object} networkConfig - Network configuration
    */
-  async handleAdminMessage(message, networkId, networkConfig) {
+  async handleAdminChannelMessage(message, networkId, networkConfig) {
     const msg = message.message.trim();
     const user = message.nickname;
     
-    if (msg.startsWith('!')) {
-      await this.adminTools.processCommand(msg, user, networkId, {
-        channel: message.target,
-        network: networkConfig
-      });
+    // Only respond to help requests in admin channel, everything else via private message
+    if (msg.toLowerCase() === '!help' || msg.toLowerCase() === '!adminhelp' || msg.toLowerCase() === 'help') {
+      await this.sendMessage(networkId, message.target, 
+        `👋 Hi ${user}! To avoid channel penalties, please use private messages for all admin commands. ` +
+        `Send me a private message: /msg ${networkConfig.irc.nick} !adminhelp`
+      );
+    } else if (msg.startsWith('!')) {
+      // Silently ignore other commands in channel to avoid penalties
+      return;
     }
   }
 
-  /**
-   * Handle player commands
-   * @param {string} command - Command string
-   * @param {string} user - Username
-   * @param {string} networkId - Network ID
-   * @param {Object} networkConfig - Network configuration
-   * @param {string} channel - Channel name
-   */
-  async handlePlayerCommand(command, user, networkId, networkConfig, channel) {
-    const parts = command.split(' ');
-    const cmd = parts[0].toLowerCase();
-    const args = parts.slice(1);
-
-    try {
-      switch (cmd) {
-        case '!help':
-          await this.sendMessage(networkId, channel, this.getHelpMessage());
-          break;
-          
-        case '!status':
-          await this.sendMessage(networkId, channel, await this.getStatusMessage());
-          break;
-          
-        case '!level':
-          const playerLevel = this.levelProgression.getPlayerLevel(user);
-          await this.sendMessage(networkId, channel, `📊 Your level: ${playerLevel}`);
-          break;
-          
-        case '!quest':
-          await this.handleQuestCommand(args, user, networkId, channel);
-          break;
-          
-        case '!battle':
-          await this.handleBattleCommand(args, user, networkId, channel);
-          break;
-          
-        case '!tournament':
-          await this.handleTournamentCommand(args, user, networkId, channel);
-          break;
-          
-        case '!leaderboard':
-          await this.handleLeaderboardCommand(args, user, networkId, channel);
-          break;
-          
-        case '!achievements':
-          await this.handleAchievementsCommand(user, networkId, channel);
-          break;
-          
-        case '!class':
-          await this.handleClassCommand(user, networkId, channel);
-          break;
-          
-        case '!guild':
-          await this.handleGuildCommand(args, user, networkId, channel);
-          break;
-          
-        case '!chain':
-          await this.handleChainCommand(args, user, networkId, channel);
-          break;
-          
-        case '!infinite':
-          await this.handleInfiniteCommand(args, user, networkId, channel);
-          break;
-          
-        default:
-          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
-            message: `Unknown command: ${cmd}`
-          }));
-      }
-    } catch (error) {
-      this.logger.error(`Error handling command ${cmd}:`, error);
-      await this.sendMessage(networkId, channel, `❌ Error executing command: ${error.message}`);
-    }
-  }
 
   /**
    * Handle quest command
@@ -995,7 +931,10 @@ class MultiRPGBot {
     return [
       '🎮 **Enhanced MultiRPG Bot Help** 🎮',
       '',
-      '**📋 Available Commands:**',
+      '⚠️ **IMPORTANT: ALL COMMANDS MUST BE SENT VIA PRIVATE MESSAGE!** ⚠️',
+      'Using commands in channels will result in penalties!',
+      '',
+      '**📋 Available Commands (Private Message Only):**',
       '• !help - Show this help message',
       '• !userhelp - User-specific help',
       '• !adminhelp - Admin commands (admin only)',
@@ -1011,22 +950,27 @@ class MultiRPGBot {
       '• !chain - Chain quest system',
       '• !infinite - Infinite battles and events',
       '',
-      '**🎯 How to Use:**',
-      '• Send any command as a private message to avoid channel penalties',
+      '**🎯 How to Use (PRIVATE MESSAGES ONLY):**',
+      '• Send ALL commands as private messages: /msg <botname> !command',
+      '• Example: /msg MultiRPGBot !status',
+      '• Example: /msg MultiRPGBot !level',
+      '• Example: /msg MultiRPGBot !guild join Warriors',
       '• All gameplay is automated - the bot handles everything!',
       '• Your character will automatically level up, fight, and progress',
       '• Join guilds, complete quests, and participate in tournaments',
       '',
-      '**⚡ Quick Start:**',
-      '• Use !status to see bot status',
-      '• Use !level to check your level',
-      '• Use !guild to join a guild',
-      '• Use !quest to start questing',
+      '**⚡ Quick Start (Private Messages):**',
+      '• /msg <botname> !status - See bot status',
+      '• /msg <botname> !level - Check your level',
+      '• /msg <botname> !guild - Join a guild',
+      '• /msg <botname> !quest - Start questing',
       '',
-      '**❓ Need More Help?**',
-      '• Use !userhelp for detailed user commands',
-      '• Use !adminhelp for admin commands (if you have permissions)',
-      '• The bot runs 24/7 with full automation!'
+      '**❓ Need More Help? (Private Messages):**',
+      '• /msg <botname> !userhelp - Detailed user commands',
+      '• /msg <botname> !adminhelp - Admin commands (if you have permissions)',
+      '• The bot runs 24/7 with full automation!',
+      '',
+      '**🚫 NEVER use commands in channels - you will be penalized!**'
     ].join('\n');
   }
 
@@ -1037,51 +981,61 @@ class MultiRPGBot {
     return [
       '👤 **User Commands Help** 👤',
       '',
-      '**🎮 Game Commands:**',
-      '• !status - Show detailed bot status and statistics',
-      '• !level - Display your current level and experience',
-      '• !class - Show your character class and abilities',
+      '⚠️ **ALL COMMANDS MUST BE SENT VIA PRIVATE MESSAGE!** ⚠️',
+      'Use: /msg <botname> !command',
       '',
-      '**🏰 Guild Commands:**',
-      '• !guild - Show your current guild information',
-      '• !guild join <name> - Join a specific guild',
-      '• !guild leave - Leave your current guild',
-      '• !guild list - List top guilds',
+      '**🎮 Game Commands (Private Message Only):**',
+      '• /msg <botname> !status - Show detailed bot status and statistics',
+      '• /msg <botname> !level - Display your current level and experience',
+      '• /msg <botname> !class - Show your character class and abilities',
       '',
-      '**📜 Quest Commands:**',
-      '• !quest - Show available quests',
-      '• !quest list - List all active quests',
-      '• !quest accept - Accept the current quest',
+      '**🏰 Guild Commands (Private Message Only):**',
+      '• /msg <botname> !guild - Show your current guild information',
+      '• /msg <botname> !guild join <name> - Join a specific guild',
+      '• /msg <botname> !guild leave - Leave your current guild',
+      '• /msg <botname> !guild list - List top guilds',
       '',
-      '**⚔️ Battle Commands:**',
-      '• !battle pve - Start a PvE battle against monsters',
-      '• !battle pvp <player> - Challenge another player',
-      '• !battle challenge - Challenge random opponent',
+      '**📜 Quest Commands (Private Message Only):**',
+      '• /msg <botname> !quest - Show available quests',
+      '• /msg <botname> !quest list - List all active quests',
+      '• /msg <botname> !quest accept - Accept the current quest',
       '',
-      '**🏆 Tournament Commands:**',
-      '• !tournament - Show tournament information',
-      '• !tournament list - List active tournaments',
-      '• !tournament join - Join current tournament',
+      '**⚔️ Battle Commands (Private Message Only):**',
+      '• /msg <botname> !battle pve - Start a PvE battle against monsters',
+      '• /msg <botname> !battle pvp <player> - Challenge another player',
+      '• /msg <botname> !battle challenge - Challenge random opponent',
       '',
-      '**📊 Information Commands:**',
-      '• !leaderboard - Show global leaderboard',
-      '• !leaderboard <number> - Show top N players',
-      '• !achievements - Display your achievements',
+      '**🏆 Tournament Commands (Private Message Only):**',
+      '• /msg <botname> !tournament - Show tournament information',
+      '• /msg <botname> !tournament list - List active tournaments',
+      '• /msg <botname> !tournament join - Join current tournament',
       '',
-      '**♾️ Advanced Commands:**',
-      '• !chain start <type> - Start a chain quest',
-      '• !chain list - List available chain quests',
-      '• !chain progress - Check your chain progress',
-      '• !infinite battle <type> - Start infinite battle',
-      '• !infinite quest - Start infinite questing',
-      '• !infinite event - Check global events',
+      '**📊 Information Commands (Private Message Only):**',
+      '• /msg <botname> !leaderboard - Show global leaderboard',
+      '• /msg <botname> !leaderboard <number> - Show top N players',
+      '• /msg <botname> !achievements - Display your achievements',
       '',
-      '**💡 Tips:**',
-      '• All commands work via private message',
-      '• The bot handles all gameplay automatically',
-      '• Your character progresses even when offline',
-      '• Join guilds for bonuses and team play',
-      '• Complete quests for rewards and experience'
+      '**♾️ Advanced Commands (Private Message Only):**',
+      '• /msg <botname> !chain start <type> - Start a chain quest',
+      '• /msg <botname> !chain list - List available chain quests',
+      '• /msg <botname> !chain progress - Check your chain progress',
+      '• /msg <botname> !infinite battle <type> - Start infinite battle',
+      '• /msg <botname> !infinite quest - Start infinite questing',
+      '• /msg <botname> !infinite event - Check global events',
+      '',
+      '**💡 Important Tips:**',
+      '• 🚫 NEVER use commands in channels - you will be penalized!',
+      '• ✅ ALWAYS use private messages: /msg <botname> !command',
+      '• 🤖 The bot handles all gameplay automatically',
+      '• 📈 Your character progresses even when offline',
+      '• 🏰 Join guilds for bonuses and team play',
+      '• 📜 Complete quests for rewards and experience',
+      '• ⚔️ Battles and tournaments happen automatically',
+      '',
+      '**Example Usage:**',
+      '• /msg MultiRPGBot !status',
+      '• /msg MultiRPGBot !guild join Warriors',
+      '• /msg MultiRPGBot !battle pve'
     ].join('\n');
   }
 
@@ -1092,70 +1046,81 @@ class MultiRPGBot {
     return [
       '👑 **Admin Commands Help** 👑',
       '',
-      '**📢 Broadcasting Commands:**',
-      '• !broadcast <message> - Broadcast to all networks',
-      '• !announce <message> - Make an announcement',
-      '• !global <message> - Send global message',
-      '• !network <network> <message> - Send to specific network',
+      '⚠️ **ALL ADMIN COMMANDS MUST BE SENT VIA PRIVATE MESSAGE!** ⚠️',
+      'Use: /msg <botname> !command',
       '',
-      '**👥 Player Management:**',
-      '• !ban <player> [reason] - Ban a player',
-      '• !unban <player> - Unban a player',
-      '• !kick <player> [reason] - Kick a player',
-      '• !mute <player> [duration] - Mute a player',
-      '• !unmute <player> - Unmute a player',
-      '• !warn <player> <reason> - Warn a player',
-      '• !playerinfo <player> - Get player information',
+      '**📢 Broadcasting Commands (Private Message Only):**',
+      '• /msg <botname> !broadcast <message> - Broadcast to all networks',
+      '• /msg <botname> !announce <message> - Make an announcement',
+      '• /msg <botname> !global <message> - Send global message',
+      '• /msg <botname> !network <network> <message> - Send to specific network',
       '',
-      '**🎉 Event Management:**',
-      '• !event start <name> - Start a global event',
-      '• !event stop <name> - Stop a global event',
-      '• !event list - List active events',
-      '• !event create <name> <type> - Create new event',
+      '**👥 Player Management (Private Message Only):**',
+      '• /msg <botname> !ban <player> [reason] - Ban a player',
+      '• /msg <botname> !unban <player> - Unban a player',
+      '• /msg <botname> !kick <player> [reason] - Kick a player',
+      '• /msg <botname> !mute <player> [duration] - Mute a player',
+      '• /msg <botname> !unmute <player> - Unmute a player',
+      '• /msg <botname> !warn <player> <reason> - Warn a player',
+      '• /msg <botname> !playerinfo <player> - Get player information',
       '',
-      '**🏆 Tournament Management:**',
-      '• !tournament create <name> - Create tournament',
-      '• !tournament start <id> - Start tournament',
-      '• !tournament stop <id> - Stop tournament',
-      '• !tournament list - List all tournaments',
-      '• !tournament add <id> <player> - Add player to tournament',
-      '• !tournament remove <id> <player> - Remove player',
+      '**🎉 Event Management (Private Message Only):**',
+      '• /msg <botname> !event start <name> - Start a global event',
+      '• /msg <botname> !event stop <name> - Stop a global event',
+      '• /msg <botname> !event list - List active events',
+      '• /msg <botname> !event create <name> <type> - Create new event',
       '',
-      '**⚙️ System Management:**',
-      '• !restart - Restart the bot',
-      '• !shutdown - Shutdown the bot',
-      '• !reload - Reload configuration',
-      '• !status - Show detailed system status',
-      '• !networks - Show network status',
-      '• !players - Show player statistics',
-      '• !battles - Show battle statistics',
-      '• !quests - Show quest statistics',
+      '**🏆 Tournament Management (Private Message Only):**',
+      '• /msg <botname> !tournament create <name> - Create tournament',
+      '• /msg <botname> !tournament start <id> - Start tournament',
+      '• /msg <botname> !tournament stop <id> - Stop tournament',
+      '• /msg <botname> !tournament list - List all tournaments',
+      '• /msg <botname> !tournament add <id> <player> - Add player to tournament',
+      '• /msg <botname> !tournament remove <id> <player> - Remove player',
       '',
-      '**🔧 Configuration:**',
-      '• !config get <key> - Get configuration value',
-      '• !config set <key> <value> - Set configuration value',
-      '• !config reload - Reload configuration file',
-      '• !config save - Save current configuration',
+      '**⚙️ System Management (Private Message Only):**',
+      '• /msg <botname> !restart - Restart the bot',
+      '• /msg <botname> !shutdown - Shutdown the bot',
+      '• /msg <botname> !reload - Reload configuration',
+      '• /msg <botname> !status - Show detailed system status',
+      '• /msg <botname> !networks - Show network status',
+      '• /msg <botname> !players - Show player statistics',
+      '• /msg <botname> !battles - Show battle statistics',
+      '• /msg <botname> !quests - Show quest statistics',
       '',
-      '**📊 Monitoring:**',
-      '• !logs - Show recent logs',
-      '• !errors - Show recent errors',
-      '• !performance - Show performance metrics',
-      '• !memory - Show memory usage',
-      '• !uptime - Show bot uptime',
+      '**🔧 Configuration (Private Message Only):**',
+      '• /msg <botname> !config get <key> - Get configuration value',
+      '• /msg <botname> !config set <key> <value> - Set configuration value',
+      '• /msg <botname> !config reload - Reload configuration file',
+      '• /msg <botname> !config save - Save current configuration',
       '',
-      '**🛡️ Security:**',
-      '• !permissions <user> - Check user permissions',
-      '• !grant <user> <permission> - Grant permission',
-      '• !revoke <user> <permission> - Revoke permission',
-      '• !audit - Show audit log',
+      '**📊 Monitoring (Private Message Only):**',
+      '• /msg <botname> !logs - Show recent logs',
+      '• /msg <botname> !errors - Show recent errors',
+      '• /msg <botname> !performance - Show performance metrics',
+      '• /msg <botname> !memory - Show memory usage',
+      '• /msg <botname> !uptime - Show bot uptime',
       '',
-      '**💡 Admin Tips:**',
-      '• All commands work via private message',
-      '• Use !status for detailed system information',
-      '• Monitor logs for any issues',
-      '• Use events to engage players',
-      '• Regular tournaments keep players active'
+      '**🛡️ Security (Private Message Only):**',
+      '• /msg <botname> !permissions <user> - Check user permissions',
+      '• /msg <botname> !grant <user> <permission> - Grant permission',
+      '• /msg <botname> !revoke <user> <permission> - Revoke permission',
+      '• /msg <botname> !audit - Show audit log',
+      '',
+      '**💡 Important Admin Tips:**',
+      '• 🚫 NEVER use admin commands in channels - you will be penalized!',
+      '• ✅ ALWAYS use private messages: /msg <botname> !command',
+      '• 🔍 Use !status for detailed system information',
+      '• 📊 Monitor logs for any issues',
+      '• 🎉 Use events to engage players',
+      '• 🏆 Regular tournaments keep players active',
+      '• 🛡️ Be careful with ban/kick commands',
+      '',
+      '**Example Admin Usage:**',
+      '• /msg MultiRPGBot !status',
+      '• /msg MultiRPGBot !broadcast Welcome to the server!',
+      '• /msg MultiRPGBot !ban troublemaker Spamming',
+      '• /msg MultiRPGBot !event start Dragon Invasion'
     ].join('\n');
   }
 

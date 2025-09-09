@@ -141,17 +141,26 @@ async function setup() {
   console.log('\nTo start your bot:');
   console.log('1. Run: npm install');
   console.log('2. Run: npm start');
+  console.log('\n⚠️  IMPORTANT: ALL COMMANDS MUST BE SENT VIA PRIVATE MESSAGE! ⚠️');
+  console.log('Using commands in channels will result in penalties!');
   console.log('\nBot Features:');
   console.log('• 🤖 Fully automated gameplay');
   console.log('• 💬 Help via private message: /msg ' + botName + ' !help');
   console.log('• 👑 Admin help: /msg ' + botName + ' !adminhelp');
   console.log('• 👤 User help: /msg ' + botName + ' !userhelp');
+  console.log('\nExample Commands (Private Messages Only):');
+  console.log('• /msg ' + botName + ' !status - Check bot status');
+  console.log('• /msg ' + botName + ' !level - Check your level');
+  console.log('• /msg ' + botName + ' !guild join Warriors - Join a guild');
+  console.log('• /msg ' + botName + ' !battle pve - Start PvE battle');
   console.log('\nThe bot will automatically:');
   console.log('• Connect to IRC and join channels');
   console.log('• Login to MultiRPG game service');
   console.log('• Start automated battles and quests');
   console.log('• Level up and progress your character');
   console.log('• Handle all game mechanics without intervention');
+  console.log('\n🚫 NEVER use commands in channels - you will be penalized!');
+  console.log('✅ ALWAYS use private messages: /msg ' + botName + ' !command');
   console.log('\nEnjoy your automated RPG adventure! 🎮');
   
   rl.close();
