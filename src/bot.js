@@ -16,6 +16,11 @@ const BattleSystem = require('./core/BattleSystem');
 const TournamentSystem = require('./core/TournamentSystem');
 const AdminTools = require('./core/AdminTools');
 const Database = require('./core/Database');
+const PlayerClasses = require('./core/PlayerClasses');
+const GuildSystem = require('./core/GuildSystem');
+const InfiniteSystems = require('./core/InfiniteSystems');
+const GlobalPlayerSystem = require('./core/GlobalPlayerSystem');
+const MessageSystem = require('./core/MessageSystem');
 
 // Utilities
 const winston = require('winston');
@@ -37,6 +42,11 @@ class MultiRPGBot {
     this.tournamentSystem = null;
     this.adminTools = null;
     this.database = null;
+    this.playerClasses = null;
+    this.guildSystem = null;
+    this.infiniteSystems = null;
+    this.globalPlayerSystem = null;
+    this.messageSystem = null;
     
     // Bot state
     this.isRunning = false;
@@ -104,12 +114,25 @@ class MultiRPGBot {
     // Initialize global synchronization
     this.globalSync = new GlobalSync(this.config);
     
+    // Initialize message system
+    this.messageSystem = new MessageSystem(this.config);
+    
+    // Initialize player classes
+    this.playerClasses = new PlayerClasses(this.config, this.globalSync);
+    
+    // Initialize guild system
+    this.guildSystem = new GuildSystem(this.config, this.globalSync, this.playerClasses);
+    
+    // Initialize global player system
+    this.globalPlayerSystem = new GlobalPlayerSystem(this.config, this.globalSync, this.playerClasses, this.guildSystem);
+    
     // Initialize other systems
     this.matchmaking = new Matchmaking(this.config, this.globalSync);
     this.questSystem = new QuestSystem(this.config, this.globalSync);
     this.levelProgression = new LevelProgression(this.config, this.globalSync);
     this.battleSystem = new BattleSystem(this.config, this.globalSync, this.matchmaking);
     this.tournamentSystem = new TournamentSystem(this.config, this.globalSync, this.battleSystem, this.matchmaking);
+    this.infiniteSystems = new InfiniteSystems(this.config, this.globalSync, this.questSystem, this.battleSystem, this.levelProgression, this.guildSystem);
     this.adminTools = new AdminTools(this.config, this.globalSync, this.battleSystem, this.tournamentSystem, this.questSystem, this.levelProgression);
     
     this.logger.info('✅ Core systems initialized');
@@ -268,18 +291,20 @@ class MultiRPGBot {
         englevel: Number(arr[35])
       };
 
-      // Update player state globally
-      await this.globalSync.updatePlayerState(networkConfig.irc.nick, {
-        ...playerData,
-        networkId,
-        lastUpdate: Date.now()
-      }, networkId);
+      // Register player globally if not exists
+      let globalPlayer = this.globalPlayerSystem.getGlobalPlayer(networkConfig.irc.nick, networkId);
+      if (!globalPlayer) {
+        globalPlayer = await this.globalPlayerSystem.registerGlobalPlayer(networkConfig.irc.nick, networkId, playerData);
+      } else {
+        // Update existing player
+        globalPlayer = await this.globalPlayerSystem.updatePlayerSession(networkConfig.irc.nick, networkId, playerData);
+      }
 
       // Auto-level up if applicable
-      if (playerData.level > 1) {
-        await this.levelProgression.levelUp(networkConfig.irc.nick, {
-          level: playerData.level,
-          networkId
+      if (playerData.level > globalPlayer.level) {
+        await this.globalPlayerSystem.levelUpPlayer(networkConfig.irc.nick, playerData.level, {
+          exp: (playerData.level - globalPlayer.level) * 1000,
+          gold: (playerData.level - globalPlayer.level) * 100
         });
       }
 
@@ -385,8 +410,26 @@ class MultiRPGBot {
           await this.handleAchievementsCommand(user, networkId, channel);
           break;
           
+        case '!class':
+          await this.handleClassCommand(user, networkId, channel);
+          break;
+          
+        case '!guild':
+          await this.handleGuildCommand(args, user, networkId, channel);
+          break;
+          
+        case '!chain':
+          await this.handleChainCommand(args, user, networkId, channel);
+          break;
+          
+        case '!infinite':
+          await this.handleInfiniteCommand(args, user, networkId, channel);
+          break;
+          
         default:
-          await this.sendMessage(networkId, channel, `❓ Unknown command: ${cmd}. Use !help for available commands.`);
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+            message: `Unknown command: ${cmd}`
+          }));
       }
     } catch (error) {
       this.logger.error(`Error handling command ${cmd}:`, error);
@@ -548,15 +591,221 @@ class MultiRPGBot {
    * @param {string} channel - Channel name
    */
   async handleAchievementsCommand(user, networkId, channel) {
-    const achievements = this.levelProgression.getPlayerAchievements(user);
+    const globalPlayer = this.globalPlayerSystem.getGlobalPlayer(user, networkId);
+    if (!globalPlayer) {
+      await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_not_found', {
+        item: 'Player'
+      }));
+      return;
+    }
+
+    const achievements = globalPlayer.stats.achievements || [];
     
     if (achievements.length === 0) {
-      await this.sendMessage(networkId, channel, `🏆 No achievements yet, ${user}. Keep playing!`);
+      await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('achievement_unlocked', {
+        playerName: user,
+        achievementName: 'Keep Playing!',
+        description: 'No achievements yet, but keep playing to unlock amazing rewards!'
+      }));
       return;
     }
 
     const achievementList = achievements.slice(0, 5).map(ach => `• ${ach.name}`).join('\n');
     await this.sendMessage(networkId, channel, `🏆 Your Achievements (${achievements.length}):\n${achievementList}`);
+  }
+
+  /**
+   * Handle class command
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   * @param {string} channel - Channel name
+   */
+  async handleClassCommand(user, networkId, channel) {
+    const globalPlayer = this.globalPlayerSystem.getGlobalPlayer(user, networkId);
+    if (!globalPlayer) {
+      await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_not_found', {
+        item: 'Player'
+      }));
+      return;
+    }
+
+    const playerClass = this.playerClasses.getPlayerClass(globalPlayer.globalId);
+    if (!playerClass) {
+      await this.sendMessage(networkId, channel, `❌ No class assigned. Use !class choose <class> to select one.`);
+      return;
+    }
+
+    const classInfo = [
+      `${this.messageSystem.formatPlayerName(user, playerClass.className)}`,
+      `📊 Level: ${playerClass.level}`,
+      `⚔️ Attack: ${playerClass.stats.attack}`,
+      `🛡️ Defense: ${playerClass.stats.defense}`,
+      `❤️ HP: ${playerClass.stats.hp}`,
+      `🔮 Magic: ${playerClass.stats.magic}`,
+      `⚡ Speed: ${playerClass.stats.speed}`
+    ].join('\n');
+
+    await this.sendMessage(networkId, channel, classInfo);
+  }
+
+  /**
+   * Handle guild command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   * @param {string} channel - Channel name
+   */
+  async handleGuildCommand(args, user, networkId, channel) {
+    const globalPlayer = this.globalPlayerSystem.getGlobalPlayer(user, networkId);
+    if (!globalPlayer) {
+      await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_not_found', {
+        item: 'Player'
+      }));
+      return;
+    }
+
+    if (args.length === 0) {
+      const guild = this.guildSystem.getPlayerGuild(globalPlayer.globalId);
+      if (!guild) {
+        await this.sendMessage(networkId, channel, `🏰 You are not in a guild. Use !guild join <guild> to join one!`);
+        return;
+      }
+
+      const guildInfo = this.messageSystem.formatGuild(guild);
+      await this.sendMessage(networkId, channel, guildInfo);
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'join':
+        const guildName = args.slice(1).join(' ');
+        if (!guildName) {
+          await this.sendMessage(networkId, channel, `❌ Please specify guild name: !guild join <guild>`);
+          return;
+        }
+        
+        try {
+          const guild = await this.guildSystem.joinGuild(globalPlayer.globalId, guildName);
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('guild_joined', {
+            playerName: user,
+            guildName: guild.name
+          }));
+        } catch (error) {
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+            message: error.message
+          }));
+        }
+        break;
+        
+      case 'leave':
+        try {
+          await this.guildSystem.leaveGuild(globalPlayer.globalId);
+          await this.sendMessage(networkId, channel, `👥 You have left your guild.`);
+        } catch (error) {
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+            message: error.message
+          }));
+        }
+        break;
+        
+      case 'list':
+        const leaderboard = this.guildSystem.getGuildLeaderboard(10);
+        const guildList = leaderboard.map((guild, index) => 
+          `${index + 1}. ${guild.name} (Level ${guild.level})`
+        ).join('\n');
+        await this.sendMessage(networkId, channel, `🏰 Top Guilds:\n${guildList}`);
+        break;
+        
+      default:
+        await this.sendMessage(networkId, channel, `❓ Usage: !guild [join|leave|list]`);
+    }
+  }
+
+  /**
+   * Handle chain command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   * @param {string} channel - Channel name
+   */
+  async handleChainCommand(args, user, networkId, channel) {
+    if (args.length === 0) {
+      await this.sendMessage(networkId, channel, `❓ Usage: !chain [start|list|progress] <chain>`);
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'start':
+        const chainId = args[1] || 'dragon_slayer';
+        try {
+          const chainData = await this.infiniteSystems.startChainQuest(user, chainId);
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('chain_quest_start', {
+            playerName: user,
+            questName: chainData.name
+          }));
+        } catch (error) {
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+            message: error.message
+          }));
+        }
+        break;
+        
+      case 'list':
+        await this.sendMessage(networkId, channel, `📜 Available Chain Quests: Dragon Slayer, Shadow Walker, Guild Master`);
+        break;
+        
+      case 'progress':
+        await this.sendMessage(networkId, channel, `📊 Chain quest progress coming soon!`);
+        break;
+        
+      default:
+        await this.sendMessage(networkId, channel, `❓ Usage: !chain [start|list|progress] <chain>`);
+    }
+  }
+
+  /**
+   * Handle infinite command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   * @param {string} channel - Channel name
+   */
+  async handleInfiniteCommand(args, user, networkId, channel) {
+    if (args.length === 0) {
+      await this.sendMessage(networkId, channel, `❓ Usage: !infinite [battle|quest|event] <type>`);
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'battle':
+        const battleType = args[1] || 'dragon_horde';
+        try {
+          const battleData = await this.infiniteSystems.startInfiniteBattle(user, battleType);
+          await this.sendMessage(networkId, channel, `♾️ Infinite battle started: ${battleData.name}! Endless waves await!`);
+        } catch (error) {
+          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+            message: error.message
+          }));
+        }
+        break;
+        
+      case 'quest':
+        await this.sendMessage(networkId, channel, `📜 Use !chain start to begin infinite chain quests!`);
+        break;
+        
+      case 'event':
+        await this.sendMessage(networkId, channel, `🎉 Global events are automatically triggered! Watch for announcements!`);
+        break;
+        
+      default:
+        await this.sendMessage(networkId, channel, `❓ Usage: !infinite [battle|quest|event] <type>`);
+    }
   }
 
   /**
@@ -606,18 +855,22 @@ class MultiRPGBot {
    * Get help message
    */
   getHelpMessage() {
-    return [
-      `🎮 ENHANCED MULTIRPG BOT COMMANDS`,
-      `📊 !status - Show bot status`,
-      `📈 !level - Show your level`,
-      `📜 !quest - Show available quests`,
-      `⚔️ !battle pve - Start PvE battle`,
-      `⚔️ !battle pvp <opponent> - Challenge player`,
-      `🏆 !tournament - Show tournament info`,
-      `🏅 !leaderboard [limit] - Show leaderboard`,
-      `🏆 !achievements - Show your achievements`,
-      `❓ !help - Show this help`
-    ].join('\n');
+    return this.messageSystem.formatMessage('help_general', {
+      commands: [
+        '!status - Bot status',
+        '!level - Your level',
+        '!class - Your class info',
+        '!guild - Guild information',
+        '!quest - Available quests',
+        '!battle pve/pvp - Start battles',
+        '!tournament - Tournament info',
+        '!leaderboard - Global leaderboard',
+        '!achievements - Your achievements',
+        '!chain - Start chain quests',
+        '!infinite - Infinite battles',
+        '!help - This help'
+      ].join(' | ')
+    });
   }
 
   /**
