@@ -4,8 +4,7 @@
  */
 
 const config = require('./config/config');
-const factory = require('irc-factory');
-const api = new factory.Api();
+const irc = require('irc');
 
 // Core systems
 const GlobalSync = require('./core/GlobalSync');
@@ -29,7 +28,6 @@ const wildcard = require('node-wildcard');
 class MultiRPGBot {
   constructor() {
     this.config = config;
-    this.api = api;
     this.clients = new Map(); // networkId -> client
     this.networks = new Map(); // networkId -> network data
     
