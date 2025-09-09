@@ -290,7 +290,14 @@ class MultiRPGBot {
           break;
           
         case '!status':
-          await this.sendPrivateMessage(networkId, user, await this.getStatusMessage());
+          if (args.length > 0) {
+            // Show specific player status
+            const targetPlayer = args[0];
+            await this.sendPrivateMessage(networkId, user, await this.getPlayerStatusMessage(targetPlayer));
+          } else {
+            // Show bot status
+            await this.sendPrivateMessage(networkId, user, await this.getStatusMessage());
+          }
           break;
           
         case '!level':
@@ -332,6 +339,26 @@ class MultiRPGBot {
           
         case '!infinite':
           await this.handleInfiniteCommand(args, user, networkId, user);
+          break;
+          
+        case '!players':
+          await this.handlePlayersCommand(args, user, networkId);
+          break;
+          
+        case '!networks':
+          await this.handleNetworksCommand(user, networkId);
+          break;
+          
+        case '!search':
+          await this.handleSearchCommand(args, user, networkId);
+          break;
+          
+        case '!social':
+          await this.handleSocialCommand(args, user, networkId);
+          break;
+          
+        case '!cross':
+          await this.handleCrossNetworkCommand(args, user, networkId);
           break;
           
         default:
@@ -849,7 +876,7 @@ class MultiRPGBot {
    */
   async handleInfiniteCommand(args, user, networkId, channel) {
     if (args.length === 0) {
-      await this.sendMessage(networkId, channel, `❓ Usage: !infinite [battle|quest|event] <type>`);
+      await this.sendPrivateMessage(networkId, user, `❓ Usage: !infinite [battle|quest|event] <type>`);
       return;
     }
 
@@ -860,24 +887,353 @@ class MultiRPGBot {
         const battleType = args[1] || 'dragon_horde';
         try {
           const battleData = await this.infiniteSystems.startInfiniteBattle(user, battleType);
-          await this.sendMessage(networkId, channel, `♾️ Infinite battle started: ${battleData.name}! Endless waves await!`);
+          await this.sendPrivateMessage(networkId, user, `♾️ Infinite battle started: ${battleData.name}! Endless waves await!`);
         } catch (error) {
-          await this.sendMessage(networkId, channel, this.messageSystem.formatMessage('error_generic', {
+          await this.sendPrivateMessage(networkId, user, this.messageSystem.formatMessage('error_generic', {
             message: error.message
           }));
         }
         break;
         
       case 'quest':
-        await this.sendMessage(networkId, channel, `📜 Use !chain start to begin infinite chain quests!`);
+        await this.sendPrivateMessage(networkId, user, `📜 Use !chain start to begin infinite chain quests!`);
         break;
         
       case 'event':
-        await this.sendMessage(networkId, channel, `🎉 Global events are automatically triggered! Watch for announcements!`);
+        await this.sendPrivateMessage(networkId, user, `🎉 Global events are automatically triggered! Watch for announcements!`);
         break;
         
       default:
-        await this.sendMessage(networkId, channel, `❓ Usage: !infinite [battle|quest|event] <type>`);
+        await this.sendPrivateMessage(networkId, user, `❓ Usage: !infinite [battle|quest|event] <type>`);
+    }
+  }
+
+  /**
+   * Handle players command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handlePlayersCommand(args, user, networkId) {
+    const limit = parseInt(args[0]) || 20;
+    const onlinePlayers = await this.globalPlayerSystem.getOnlinePlayers(limit);
+    
+    if (onlinePlayers.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `👥 **Online Players** 👥`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `No players are currently online.`,
+        `💡 Check back later or invite friends to join!`
+      ].join('\n'));
+      return;
+    }
+
+    const playerList = onlinePlayers.map((player, index) => {
+      const playerClass = this.playerClasses.getPlayerClass(player.globalId);
+      const networkInfo = this.networks.get(player.networkId);
+      const classDisplay = playerClass ? `[${playerClass.className}]` : '[No Class]';
+      const networkDisplay = networkInfo ? networkInfo.name : 'Unknown';
+      
+      return `${index + 1}. **${player.name}** ${classDisplay} - Level ${player.level} (${networkDisplay})`;
+    }).join('\n');
+
+    await this.sendPrivateMessage(networkId, user, [
+      `👥 **Online Players** (${onlinePlayers.length}) 👥`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      playerList,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `💡 Use !status <player> to see detailed player info!`
+    ].join('\n'));
+  }
+
+  /**
+   * Handle networks command
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleNetworksCommand(user, networkId) {
+    const networkStats = [];
+    
+    for (const [id, network] of this.networks) {
+      const isConnected = this.globalSync.isNetworkConnected(id);
+      const playerCount = await this.globalPlayerSystem.getNetworkPlayerCount(id);
+      
+      networkStats.push([
+        `🌐 **${network.name}**`,
+        `   📍 Server: ${network.irc.server}:${network.irc.port}`,
+        `   🔗 Status: ${isConnected ? '🟢 Connected' : '🔴 Disconnected'}`,
+        `   👥 Players: ${playerCount}`,
+        `   📺 Channels: ${network.irc.channels.join(', ')}`
+      ].join('\n'));
+    }
+
+    await this.sendPrivateMessage(networkId, user, [
+      `🌐 **Network Status** 🌐`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      networkStats.join('\n\n'),
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `💡 Players can play across all connected networks!`
+    ].join('\n'));
+  }
+
+  /**
+   * Handle search command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleSearchCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `🔍 **Search Commands** 🔍`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `• !search player <name> - Search for a player`,
+        `• !search guild <name> - Search for a guild`,
+        `• !search class <class> - Search players by class`,
+        `• !search network <network> - Search players in network`,
+        `• !search level <min>-<max> - Search by level range`
+      ].join('\n'));
+      return;
+    }
+
+    const searchType = args[0].toLowerCase();
+    const searchTerm = args.slice(1).join(' ');
+
+    switch (searchType) {
+      case 'player':
+        if (!searchTerm) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a player name to search for.`);
+          return;
+        }
+        await this.sendPrivateMessage(networkId, user, await this.getPlayerStatusMessage(searchTerm));
+        break;
+        
+      case 'guild':
+        if (!searchTerm) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a guild name to search for.`);
+          return;
+        }
+        const guild = this.guildSystem.findGuild(searchTerm);
+        if (guild) {
+          const members = this.guildSystem.getGuildMembers(guild.id);
+          await this.sendPrivateMessage(networkId, user, [
+            `🏰 **Guild: ${guild.name}** 🏰`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `📊 **Level:** ${guild.level}`,
+            `👥 **Members:** ${members.length}`,
+            `💎 **Total Experience:** ${guild.totalExperience || 0}`,
+            `🏆 **Achievements:** ${guild.achievements?.length || 0}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Use !guild join ${guild.name} to join this guild!`
+          ].join('\n'));
+        } else {
+          await this.sendPrivateMessage(networkId, user, `❌ Guild "${searchTerm}" not found.`);
+        }
+        break;
+        
+      case 'class':
+        if (!searchTerm) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a class name to search for.`);
+          return;
+        }
+        const classPlayers = await this.globalPlayerSystem.getPlayersByClass(searchTerm);
+        if (classPlayers.length === 0) {
+          await this.sendPrivateMessage(networkId, user, `❌ No players found with class "${searchTerm}".`);
+          return;
+        }
+        
+        const classList = classPlayers.slice(0, 10).map((player, index) => 
+          `${index + 1}. **${player.name}** - Level ${player.level}`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🎭 **Players with Class: ${searchTerm}** 🎭`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          classList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Showing ${Math.min(10, classPlayers.length)} of ${classPlayers.length} players.`
+        ].join('\n'));
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown search type: ${searchType}. Use !search for help.`);
+    }
+  }
+
+  /**
+   * Handle social command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleSocialCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `👥 **Social Commands** 👥`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `• !social friends - Show your friends list`,
+        `• !social add <player> - Add a player as friend`,
+        `• !social remove <player> - Remove a friend`,
+        `• !social rivals - Show your rivals`,
+        `• !social challenge <player> - Challenge a player`,
+        `• !social message <player> <message> - Send message to player`,
+        `• !social stats - Show your social statistics`
+      ].join('\n'));
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'friends':
+        const friends = await this.globalPlayerSystem.getFriends(user);
+        if (friends.length === 0) {
+          await this.sendPrivateMessage(networkId, user, [
+            `👥 **Your Friends** 👥`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `You don't have any friends yet.`,
+            `💡 Use !social add <player> to add friends!`
+          ].join('\n'));
+          return;
+        }
+        
+        const friendsList = friends.map((friend, index) => 
+          `${index + 1}. **${friend.name}** - Level ${friend.level} (${friend.network})`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `👥 **Your Friends** (${friends.length}) 👥`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          friendsList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Use !social challenge <player> to challenge friends!`
+        ].join('\n'));
+        break;
+        
+      case 'add':
+        const friendName = args[1];
+        if (!friendName) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify a player name to add as friend.`);
+          return;
+        }
+        
+        try {
+          await this.globalPlayerSystem.addFriend(user, friendName);
+          await this.sendPrivateMessage(networkId, user, `✅ Added ${friendName} as a friend!`);
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to add friend: ${error.message}`);
+        }
+        break;
+        
+      case 'stats':
+        const socialStats = await this.globalPlayerSystem.getSocialStats(user);
+        await this.sendPrivateMessage(networkId, user, [
+          `📊 **Your Social Statistics** 📊`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `👥 **Friends:** ${socialStats.friends}`,
+          `⚔️ **Challenges Sent:** ${socialStats.challengesSent}`,
+          `🏆 **Challenges Won:** ${socialStats.challengesWon}`,
+          `💬 **Messages Sent:** ${socialStats.messagesSent}`,
+          `🌟 **Reputation:** ${socialStats.reputation}`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Keep playing to improve your social stats!`
+        ].join('\n'));
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown social command: ${action}. Use !social for help.`);
+    }
+  }
+
+  /**
+   * Handle cross-network command
+   * @param {Array} args - Command arguments
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   */
+  async handleCrossNetworkCommand(args, user, networkId) {
+    if (args.length === 0) {
+      await this.sendPrivateMessage(networkId, user, [
+        `🌐 **Cross-Network Commands** 🌐`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `• !cross battle <player> - Challenge player from any network`,
+        `• !cross message <player> <message> - Send message across networks`,
+        `• !cross guild <action> - Cross-network guild actions`,
+        `• !cross tournament - Join cross-network tournaments`,
+        `• !cross leaderboard - Global leaderboard across all networks`,
+        `• !cross events - Cross-network events and activities`
+      ].join('\n'));
+      return;
+    }
+
+    const action = args[0].toLowerCase();
+    
+    switch (action) {
+      case 'battle':
+        const opponent = args[1];
+        if (!opponent) {
+          await this.sendPrivateMessage(networkId, user, `❌ Please specify an opponent to challenge.`);
+          return;
+        }
+        
+        try {
+          const battle = await this.battleSystem.startCrossNetworkBattle(user, opponent);
+          await this.sendPrivateMessage(networkId, user, [
+            `⚔️ **Cross-Network Battle Started!** ⚔️`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `🎯 **Challenger:** ${user}`,
+            `🎯 **Opponent:** ${opponent}`,
+            `🌐 **Battle ID:** ${battle.id}`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `💡 Battle results will be announced when complete!`
+          ].join('\n'));
+        } catch (error) {
+          await this.sendPrivateMessage(networkId, user, `❌ Failed to start cross-network battle: ${error.message}`);
+        }
+        break;
+        
+      case 'leaderboard':
+        const globalLeaderboard = await this.globalPlayerSystem.getGlobalLeaderboard(20);
+        const leaderboardList = globalLeaderboard.map((player, index) => 
+          `${index + 1}. **${player.name}** [${player.class}] - Level ${player.level} (${player.network})`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🏆 **Global Leaderboard** 🏆`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          leaderboardList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Compete with players from all networks!`
+        ].join('\n'));
+        break;
+        
+      case 'events':
+        const events = await this.globalSync.getActiveEvents();
+        if (events.length === 0) {
+          await this.sendPrivateMessage(networkId, user, [
+            `🎉 **Cross-Network Events** 🎉`,
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+            `No active cross-network events at the moment.`,
+            `💡 Check back later for exciting global events!`
+          ].join('\n'));
+          return;
+        }
+        
+        const eventsList = events.map((event, index) => 
+          `${index + 1}. **${event.name}** - ${event.description}`
+        ).join('\n');
+        
+        await this.sendPrivateMessage(networkId, user, [
+          `🎉 **Active Cross-Network Events** 🎉`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          eventsList,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `💡 Participate in events to earn rewards!`
+        ].join('\n'));
+        break;
+        
+      default:
+        await this.sendPrivateMessage(networkId, user, `❌ Unknown cross-network command: ${action}. Use !cross for help.`);
     }
   }
 
@@ -938,7 +1294,7 @@ class MultiRPGBot {
       '• !help - Show this help message',
       '• !userhelp - User-specific help',
       '• !adminhelp - Admin commands (admin only)',
-      '• !status - Bot and game status',
+      '• !status [player] - Bot status or specific player status',
       '• !level - Your current level',
       '• !class - Your character class info',
       '• !guild - Guild information and management',
@@ -949,6 +1305,11 @@ class MultiRPGBot {
       '• !achievements - Your achievements',
       '• !chain - Chain quest system',
       '• !infinite - Infinite battles and events',
+      '• !players - Show online players across all networks',
+      '• !networks - Show network status and information',
+      '• !search - Search for players, guilds, and more',
+      '• !social - Social features and friend system',
+      '• !cross - Cross-network gameplay features',
       '',
       '**🎯 How to Use (PRIVATE MESSAGES ONLY):**',
       '• Send ALL commands as private messages: /msg <botname> !command',
@@ -986,6 +1347,7 @@ class MultiRPGBot {
       '',
       '**🎮 Game Commands (Private Message Only):**',
       '• /msg <botname> !status - Show detailed bot status and statistics',
+      '• /msg <botname> !status <player> - Show another player\'s status',
       '• /msg <botname> !level - Display your current level and experience',
       '• /msg <botname> !class - Show your character class and abilities',
       '',
@@ -1022,6 +1384,22 @@ class MultiRPGBot {
       '• /msg <botname> !infinite battle <type> - Start infinite battle',
       '• /msg <botname> !infinite quest - Start infinite questing',
       '• /msg <botname> !infinite event - Check global events',
+      '',
+      '**👥 Social Commands (Private Message Only):**',
+      '• /msg <botname> !players - Show online players across all networks',
+      '• /msg <botname> !networks - Show network status and information',
+      '• /msg <botname> !search player <name> - Search for a specific player',
+      '• /msg <botname> !search guild <name> - Search for a guild',
+      '• /msg <botname> !search class <class> - Find players by class',
+      '• /msg <botname> !social friends - Show your friends list',
+      '• /msg <botname> !social add <player> - Add a player as friend',
+      '• /msg <botname> !social stats - Show your social statistics',
+      '',
+      '**🌐 Cross-Network Commands (Private Message Only):**',
+      '• /msg <botname> !cross battle <player> - Challenge player from any network',
+      '• /msg <botname> !cross leaderboard - Global leaderboard across all networks',
+      '• /msg <botname> !cross events - Cross-network events and activities',
+      '• /msg <botname> !cross message <player> <message> - Send message across networks',
       '',
       '**💡 Important Tips:**',
       '• 🚫 NEVER use commands in channels - you will be penalized!',
@@ -1134,15 +1512,88 @@ class MultiRPGBot {
     const tournamentStats = this.tournamentSystem.getTournamentStats();
     
     return [
-      `🤖 BOT STATUS`,
-      `🌐 Networks: ${stats.connectedNetworks}/${stats.totalNetworks}`,
-      `👥 Players: ${stats.totalPlayers}`,
-      `📈 Average Level: ${levelStats.averageLevel}`,
-      `⚔️ Active Battles: ${battleStats.activeBattles}`,
-      `🏆 Active Tournaments: ${tournamentStats.activeTournaments}`,
-      `📜 Active Quests: ${this.questSystem.getActiveQuests().length}`,
-      `⏰ Uptime: ${this.getUptime()}`
+      `🤖 **Enhanced MultiRPG Bot Status** 🤖`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `🌐 **Networks:** ${stats.connectedNetworks}/${stats.totalNetworks} connected`,
+      `👥 **Players:** ${stats.totalPlayers} total across all networks`,
+      `📈 **Average Level:** ${levelStats.averageLevel}`,
+      `⚔️ **Active Battles:** ${battleStats.activeBattles}`,
+      `🏆 **Active Tournaments:** ${tournamentStats.activeTournaments}`,
+      `📜 **Active Quests:** ${this.questSystem.getActiveQuests().length}`,
+      `⏰ **Uptime:** ${this.getUptime()}`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `💡 Use !status <player> to check another player's status!`
     ].join('\n');
+  }
+
+  /**
+   * Get player status message
+   * @param {string} playerName - Player name to check
+   */
+  async getPlayerStatusMessage(playerName) {
+    try {
+      // Search for player across all networks
+      const playerData = await this.globalPlayerSystem.findPlayer(playerName);
+      
+      if (!playerData) {
+        return [
+          `❌ **Player Not Found** ❌`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `Player "${playerName}" was not found in any network.`,
+          `💡 Make sure the player name is spelled correctly.`,
+          `💡 Use !players to see online players.`
+        ].join('\n');
+      }
+
+      const playerClass = this.playerClasses.getPlayerClass(playerData.globalId);
+      const guild = this.guildSystem.getPlayerGuild(playerData.globalId);
+      const networkInfo = this.networks.get(playerData.networkId);
+      
+      return [
+        `👤 **Player Status: ${playerData.name}** 👤`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `🎭 **Character:** ${playerData.name} [${playerClass ? playerClass.className : 'No Class'}]`,
+        `📊 **Level:** ${playerData.level}`,
+        `💎 **Experience:** ${playerData.experience || 0}`,
+        `💰 **Gold:** ${playerData.gold || 0}`,
+        `🏦 **Bank:** ${playerData.bank || 0}`,
+        `⚔️ **Battles Won:** ${playerData.stats?.battlesWon || 0}`,
+        `🏆 **Tournaments Won:** ${playerData.stats?.tournamentsWon || 0}`,
+        `📜 **Quests Completed:** ${playerData.stats?.questsCompleted || 0}`,
+        `🏰 **Guild:** ${guild ? guild.name : 'No Guild'}`,
+        `🌐 **Network:** ${networkInfo ? networkInfo.name : 'Unknown'}`,
+        `🕐 **Last Seen:** ${this.formatLastSeen(playerData.lastSeen)}`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `💡 Use !players to see all online players!`
+      ].join('\n');
+    } catch (error) {
+      this.logger.error('Error getting player status:', error);
+      return [
+        `❌ **Error** ❌`,
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        `Failed to retrieve player status for "${playerName}".`,
+        `💡 Please try again later.`
+      ].join('\n');
+    }
+  }
+
+  /**
+   * Format last seen time
+   * @param {Date} lastSeen - Last seen timestamp
+   */
+  formatLastSeen(lastSeen) {
+    if (!lastSeen) return 'Never';
+    
+    const now = new Date();
+    const diff = now - new Date(lastSeen);
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
+    if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+    return 'Just now';
   }
 
   /**
