@@ -213,10 +213,13 @@ class MultiRPGBot {
       this.globalSync.setNetworkStatus(networkId, false);
     });
 
-    // On private messages (game commands)
+    // On private messages (game commands and help)
     this.api.hookEvent(networkId, 'privmsg', async (message) => {
       if (message.nickname === networkConfig.game.nickname && message.target === networkConfig.irc.nick) {
         await this.handleGameMessage(message, networkId, networkConfig);
+      } else if (message.target === networkConfig.irc.nick) {
+        // Handle private messages for help commands
+        await this.handlePrivateMessage(message, networkId, networkConfig);
       }
     });
 
@@ -233,6 +236,140 @@ class MultiRPGBot {
         await this.handleAdminMessage(message, networkId, networkConfig);
       }
     });
+  }
+
+  /**
+   * Handle private messages (help commands)
+   * @param {Object} message - IRC message
+   * @param {string} networkId - Network ID
+   * @param {Object} networkConfig - Network configuration
+   */
+  async handlePrivateMessage(message, networkId, networkConfig) {
+    const msg = message.message.trim();
+    const user = message.nickname;
+    
+    // Check if user is banned
+    if (this.adminTools.bannedUsers.has(user.toLowerCase())) {
+      return;
+    }
+
+    // Handle help commands via private message
+    if (msg.startsWith('!')) {
+      await this.handlePrivateCommand(msg, user, networkId, networkConfig);
+    }
+  }
+
+  /**
+   * Handle private commands
+   * @param {string} command - Command string
+   * @param {string} user - Username
+   * @param {string} networkId - Network ID
+   * @param {Object} networkConfig - Network configuration
+   */
+  async handlePrivateCommand(command, user, networkId, networkConfig) {
+    const parts = command.split(' ');
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+
+    try {
+      switch (cmd) {
+        case '!help':
+          await this.sendPrivateMessage(networkId, user, this.getHelpMessage());
+          break;
+          
+        case '!adminhelp':
+          if (this.isAdmin(user)) {
+            await this.sendPrivateMessage(networkId, user, this.getAdminHelpMessage());
+          } else {
+            await this.sendPrivateMessage(networkId, user, '❌ You do not have admin permissions.');
+          }
+          break;
+          
+        case '!userhelp':
+          await this.sendPrivateMessage(networkId, user, this.getUserHelpMessage());
+          break;
+          
+        case '!status':
+          await this.sendPrivateMessage(networkId, user, await this.getStatusMessage());
+          break;
+          
+        case '!level':
+          const playerLevel = this.levelProgression.getPlayerLevel(user);
+          await this.sendPrivateMessage(networkId, user, `📊 Your level: ${playerLevel}`);
+          break;
+          
+        case '!class':
+          await this.handleClassCommand(user, networkId, user);
+          break;
+          
+        case '!guild':
+          await this.handleGuildCommand(args, user, networkId, user);
+          break;
+          
+        case '!quest':
+          await this.handleQuestCommand(args, user, networkId, user);
+          break;
+          
+        case '!battle':
+          await this.handleBattleCommand(args, user, networkId, user);
+          break;
+          
+        case '!tournament':
+          await this.handleTournamentCommand(args, user, networkId, user);
+          break;
+          
+        case '!leaderboard':
+          await this.handleLeaderboardCommand(args, user, networkId, user);
+          break;
+          
+        case '!achievements':
+          await this.handleAchievementsCommand(user, networkId, user);
+          break;
+          
+        case '!chain':
+          await this.handleChainCommand(args, user, networkId, user);
+          break;
+          
+        case '!infinite':
+          await this.handleInfiniteCommand(args, user, networkId, user);
+          break;
+          
+        default:
+          await this.sendPrivateMessage(networkId, user, this.messageSystem.formatMessage('error_generic', {
+            message: `Unknown command: ${cmd}. Use !help for available commands.`
+          }));
+      }
+    } catch (error) {
+      this.logger.error(`Error handling private command ${cmd}:`, error);
+      await this.sendPrivateMessage(networkId, user, `❌ Error executing command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if user is admin
+   * @param {string} user - Username
+   * @returns {boolean} - Is admin
+   */
+  isAdmin(user) {
+    // Check against admin list in config
+    const adminUsers = this.config.get('admin.users', []);
+    return adminUsers.includes(user.toLowerCase()) || 
+           this.config.get('admin.permissions', []).some(perm => 
+             this.adminTools.hasPermission(user, perm)
+           );
+  }
+
+  /**
+   * Send private message
+   * @param {string} networkId - Network ID
+   * @param {string} user - Username
+   * @param {string} message - Message to send
+   */
+  async sendPrivateMessage(networkId, user, message) {
+    const client = this.clients.get(networkId);
+    if (client) {
+      client.irc.privmsg(user, message);
+    }
   }
 
   /**
@@ -855,22 +992,171 @@ class MultiRPGBot {
    * Get help message
    */
   getHelpMessage() {
-    return this.messageSystem.formatMessage('help_general', {
-      commands: [
-        '!status - Bot status',
-        '!level - Your level',
-        '!class - Your class info',
-        '!guild - Guild information',
-        '!quest - Available quests',
-        '!battle pve/pvp - Start battles',
-        '!tournament - Tournament info',
-        '!leaderboard - Global leaderboard',
-        '!achievements - Your achievements',
-        '!chain - Start chain quests',
-        '!infinite - Infinite battles',
-        '!help - This help'
-      ].join(' | ')
-    });
+    return [
+      '🎮 **Enhanced MultiRPG Bot Help** 🎮',
+      '',
+      '**📋 Available Commands:**',
+      '• !help - Show this help message',
+      '• !userhelp - User-specific help',
+      '• !adminhelp - Admin commands (admin only)',
+      '• !status - Bot and game status',
+      '• !level - Your current level',
+      '• !class - Your character class info',
+      '• !guild - Guild information and management',
+      '• !quest - Available quests and quest management',
+      '• !battle - Start battles (PvE/PvP)',
+      '• !tournament - Tournament information',
+      '• !leaderboard - Global leaderboards',
+      '• !achievements - Your achievements',
+      '• !chain - Chain quest system',
+      '• !infinite - Infinite battles and events',
+      '',
+      '**🎯 How to Use:**',
+      '• Send any command as a private message to avoid channel penalties',
+      '• All gameplay is automated - the bot handles everything!',
+      '• Your character will automatically level up, fight, and progress',
+      '• Join guilds, complete quests, and participate in tournaments',
+      '',
+      '**⚡ Quick Start:**',
+      '• Use !status to see bot status',
+      '• Use !level to check your level',
+      '• Use !guild to join a guild',
+      '• Use !quest to start questing',
+      '',
+      '**❓ Need More Help?**',
+      '• Use !userhelp for detailed user commands',
+      '• Use !adminhelp for admin commands (if you have permissions)',
+      '• The bot runs 24/7 with full automation!'
+    ].join('\n');
+  }
+
+  /**
+   * Get user help message
+   */
+  getUserHelpMessage() {
+    return [
+      '👤 **User Commands Help** 👤',
+      '',
+      '**🎮 Game Commands:**',
+      '• !status - Show detailed bot status and statistics',
+      '• !level - Display your current level and experience',
+      '• !class - Show your character class and abilities',
+      '',
+      '**🏰 Guild Commands:**',
+      '• !guild - Show your current guild information',
+      '• !guild join <name> - Join a specific guild',
+      '• !guild leave - Leave your current guild',
+      '• !guild list - List top guilds',
+      '',
+      '**📜 Quest Commands:**',
+      '• !quest - Show available quests',
+      '• !quest list - List all active quests',
+      '• !quest accept - Accept the current quest',
+      '',
+      '**⚔️ Battle Commands:**',
+      '• !battle pve - Start a PvE battle against monsters',
+      '• !battle pvp <player> - Challenge another player',
+      '• !battle challenge - Challenge random opponent',
+      '',
+      '**🏆 Tournament Commands:**',
+      '• !tournament - Show tournament information',
+      '• !tournament list - List active tournaments',
+      '• !tournament join - Join current tournament',
+      '',
+      '**📊 Information Commands:**',
+      '• !leaderboard - Show global leaderboard',
+      '• !leaderboard <number> - Show top N players',
+      '• !achievements - Display your achievements',
+      '',
+      '**♾️ Advanced Commands:**',
+      '• !chain start <type> - Start a chain quest',
+      '• !chain list - List available chain quests',
+      '• !chain progress - Check your chain progress',
+      '• !infinite battle <type> - Start infinite battle',
+      '• !infinite quest - Start infinite questing',
+      '• !infinite event - Check global events',
+      '',
+      '**💡 Tips:**',
+      '• All commands work via private message',
+      '• The bot handles all gameplay automatically',
+      '• Your character progresses even when offline',
+      '• Join guilds for bonuses and team play',
+      '• Complete quests for rewards and experience'
+    ].join('\n');
+  }
+
+  /**
+   * Get admin help message
+   */
+  getAdminHelpMessage() {
+    return [
+      '👑 **Admin Commands Help** 👑',
+      '',
+      '**📢 Broadcasting Commands:**',
+      '• !broadcast <message> - Broadcast to all networks',
+      '• !announce <message> - Make an announcement',
+      '• !global <message> - Send global message',
+      '• !network <network> <message> - Send to specific network',
+      '',
+      '**👥 Player Management:**',
+      '• !ban <player> [reason] - Ban a player',
+      '• !unban <player> - Unban a player',
+      '• !kick <player> [reason] - Kick a player',
+      '• !mute <player> [duration] - Mute a player',
+      '• !unmute <player> - Unmute a player',
+      '• !warn <player> <reason> - Warn a player',
+      '• !playerinfo <player> - Get player information',
+      '',
+      '**🎉 Event Management:**',
+      '• !event start <name> - Start a global event',
+      '• !event stop <name> - Stop a global event',
+      '• !event list - List active events',
+      '• !event create <name> <type> - Create new event',
+      '',
+      '**🏆 Tournament Management:**',
+      '• !tournament create <name> - Create tournament',
+      '• !tournament start <id> - Start tournament',
+      '• !tournament stop <id> - Stop tournament',
+      '• !tournament list - List all tournaments',
+      '• !tournament add <id> <player> - Add player to tournament',
+      '• !tournament remove <id> <player> - Remove player',
+      '',
+      '**⚙️ System Management:**',
+      '• !restart - Restart the bot',
+      '• !shutdown - Shutdown the bot',
+      '• !reload - Reload configuration',
+      '• !status - Show detailed system status',
+      '• !networks - Show network status',
+      '• !players - Show player statistics',
+      '• !battles - Show battle statistics',
+      '• !quests - Show quest statistics',
+      '',
+      '**🔧 Configuration:**',
+      '• !config get <key> - Get configuration value',
+      '• !config set <key> <value> - Set configuration value',
+      '• !config reload - Reload configuration file',
+      '• !config save - Save current configuration',
+      '',
+      '**📊 Monitoring:**',
+      '• !logs - Show recent logs',
+      '• !errors - Show recent errors',
+      '• !performance - Show performance metrics',
+      '• !memory - Show memory usage',
+      '• !uptime - Show bot uptime',
+      '',
+      '**🛡️ Security:**',
+      '• !permissions <user> - Check user permissions',
+      '• !grant <user> <permission> - Grant permission',
+      '• !revoke <user> <permission> - Revoke permission',
+      '• !audit - Show audit log',
+      '',
+      '**💡 Admin Tips:**',
+      '• All commands work via private message',
+      '• Use !status for detailed system information',
+      '• Monitor logs for any issues',
+      '• Use events to engage players',
+      '• Regular tournaments keep players active'
+    ].join('\n');
   }
 
   /**
